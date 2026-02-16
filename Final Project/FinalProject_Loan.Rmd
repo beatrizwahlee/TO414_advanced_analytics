@@ -1,0 +1,1849 @@
+---
+title: "Loans - Final Group Project"
+author: "Data Detectives"
+date: "2024-11-21"
+output: 
+  html_document:
+    theme: yeti
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1.  Introduction
+    a.  Loading the dataset
+    b.  Pre-processing the data
+2.  Analysis of the Current Scenario
+3.  Unsupervised Learning
+    a.  Split the data
+    b.  Logistic Regression Model
+    c.  K-Nearest Neighbor Model
+    d.  Artificial Neural Network Model
+    e.  Support Vector Machine Model
+    f.  Decision Tree Model
+    g.  Random Forest Model
+    h.  XGBoost Model
+    i.  Stack Model
+    j.  Comparison of the metrics from all models
+4.  Conclusion
+    a.  Business Case Conclusion
+    b.  Lessons Learned and Improvement Points
+    c.  Overall Project and Course Conclusion
+
+------------------------------------------------------------------------
+
+# 1. Introduction: Purpose of the Work
+
+Uncollected loans have historically been one of the primary challenges
+facing banks and financial institutions, representing a significant
+source of financial loss. While these businesses profit considerably
+from interest on loans, they must also bear substantial costs when
+borrowers fail to repay their debts. These defaults not only strain
+profitability but also impact operational stability and long-term
+growth. Addressing this issue has become critical for maintaining
+financial health and improving lending strategies.
+
+The objective of this work is to build a predictive model to assist
+banks in mitigating losses associated with uncollected loans. By
+leveraging historical data, the model aims to predict the likelihood of
+loan repayment, enabling better decision-making in loan approvals and
+risk management. With a robust predictive system, banks can improve
+internal financial planning, reduce exposure to high-risk borrowers, and
+optimize resource allocation for loan recovery efforts.
+
+The dataset used in this analysis comes from an American financial
+services business, spanning the period from April 2008 to September
+2015. Among its many features, the dataset includes a key variable,
+`loan_status`, which indicates the repayment status of each loan. Using
+this and other attributes, the model will help predict whether loans
+will be repaid or defaulted. This tool not only aids in reducing
+potential losses but also empowers the company to develop more informed
+and effective lending policies.
+
+In summary, this report aims to provide a data-driven solution for a
+pressing issue in the banking sector by building a predictive model for
+loan analysis. The insights derived from this work will help the
+business enhance its financial resilience and support better credit risk
+assessment practices. <br>
+
+## a. Loading the dataset
+
+Before staring with the analysis and the financial calculations, we need
+to get the data and pre-process it. For organizations sake, all the
+libraries were called in this first snippet, just so they are not lost
+or repeated in different parts of the code.
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+# All Libraries used in this file:
+
+library(dplyr) #For pre-processing transformations
+library(ggplot2) # For plotting graphics
+library(scales) # For one of the graphics scale
+library(caret)  # For Confusion Matrix
+library(class)  # For KNN
+library(neuralnet) # For ANN
+library(kernlab) # For SVM
+library(C50) # For Decision Tree
+library(randomForest) # For Random Forest
+library(xgboost) # For Xgboost
+```
+
+The following code demonstrates how to get the data. By using the
+`stringAsFactors = T` function, the data variables will be read as
+factors, avoiding a manual transformation of each, as we will need data
+as factors on further steps of this report. The `str()` and the
+`summary()` functions were commented due to its length, for organization
+purposes.
+
+```{r}
+df <- read.csv("final_dataset_loan.csv", stringsAsFactors = T)
+#str(df)
+#summary(df)
+```
+
+<br>
+
+## b. Pre-processing the data
+
+<br>
+
+#### Converting the Target Variable
+
+As mentioned, the target variable is the `loan_status` of each customer,
+but as we can see below, there are some of these categories that should
+be disregarded considering the goal of prediction if the loan is delayed
+or not.
+
+```{r}
+levels(df$loan_status)
+```
+
+To ensure the analysis is focused and aligned with the objective of
+predicting whether loans will be collected or not, certain loan statuses
+and categories will be excluded from the dataset. Specifically, loans
+categorized as `Does not meet the credit policy. Status: Fully Paid` and
+`Does not meet the credit policy. Status: Charged Off` will be removed,
+as these do not align with the credit policy criteria under
+consideration. Additionally, loans currently `In Grace Period` and those
+classified as `Issued` will also be excluded, as they are not actively
+in the repayment phase and do not provide relevant information for the
+binary prediction task.
+
+By narrowing the dataset to include only loans that meet the credit
+policy and are within the payment period, the analysis can focus on
+predicting loan repayment outcomes effectively. This approach ensures
+the predictive model is built on a dataset representative of the target
+scenario, thereby enhancing its reliability and applicability in
+assessing whether loans will be collected or not.
+
+The following code deletes the rows in which the column `loan_status` is
+one of the levels we decided to drop:
+
+```{r}
+df <- df[!df$loan_status %in% c("In Grace Period",
+                                "Issued",
+                                "Does not meet the credit policy. Status:Charged Off", 
+                                "Does not meet the credit policy. Status:Fully Paid"), ]
+```
+
+<br>
+
+**Creating the Target Variable:**
+
+With the `loan_status` variable appropriately cleaned, we can now create
+a binary target variable, `y`. This variable consolidates all "positive"
+loan statuses into a single positive group and all "negative" loan
+statuses into a single negative group. By transforming the data into a
+binary format, the predictive model becomes more straightforward to
+interpret and implement.
+
+This approach aligns with the primary objective of the analysis: to
+predict whether a loan will be repaid or not. The binary classification
+simplifies the predictive process and provides a clear and actionable
+output for decision-making. By focusing on this streamlined prediction,
+the model delivers practical insights that support the bank's goal of
+efficiently assessing credit risk and optimizing its lending strategy.
+
+```{r}
+df$y <- ifelse(df$loan_status %in% c("Charged Off", "Default", "Late (31-120 days)"), 0, 1)
+str(df$y)
+```
+
+As seen, the code below creates a new column `y` on the dataset. Now the
+target variable is a binary, numeric column. <br>
+
+#### Deleting Columns:
+
+**Meaningless Columns:**
+
+Certain columns, such as `id`, `prime_id`, and `url`, are excluded from
+the dataset as they hold no predictive power and do not contribute to
+the modeling process. These columns are essentially identifiers or
+metadata that are irrelevant to the prediction task and could introduce
+noise if retained.
+
+In addition to these non-informative columns, the `loan_status` variable
+is also removed. Since `y` (the binary target variable) is derived
+directly from `loan_status`, the latter is inherently redundant and
+would create perfect multicollinearity if included in the analysis.
+Retaining it could compromise the integrity of the predictive model by
+introducing circular reasoning, where the target variable is predicted
+using itself. To ensure the model's reliability and validity,
+`loan_status` is excluded from the predictors.
+
+```{r}
+df <- df[, !names(df) %in% c('loan_status', 'url', 'id', 'member_id')]
+#str(df)
+```
+
+<br>
+
+**Future Variables:**
+
+Future variables refer to data that would not be available at the time
+of making the prediction, such as information about loan repayment or
+behaviors occurring after the loan is issued. Including these variables
+can lead to data leakage, where the model uses information it wouldn’t
+have in real-world scenarios, resulting in overly optimistic performance
+during training but poor generalization to new data. To prevent this,
+future variables must be excluded during data pre-processing to ensure
+the model is trained only on features realistically available at the
+time of prediction, making it both valid and reliable for practical use.
+
+Here we delete those:
+
+```{r}
+df <- df[, !names(df) %in% c('grade', 'sub_grade','pymnt_plan', 'funded_amnt_inv')]
+#str(df)
+```
+
+<br>
+
+#### Dealing with NaNs:
+
+From the structure of the dataframe, we could see that missing values
+would appear in two forms: as NaNs (as in columns like `tot_coll_amt`)
+but also as " " or "n/a". Before handling them, it is important to set a
+standard. The snippet below puts all missing values under the name `NA`
+format.
+
+```{r}
+df[df == ""] <- NA
+df[df == "n/a"] <- NA
+data.frame(colSums(is.na(df)))
+```
+
+Given the substantial number of predictive columns in the dataset, we
+opted to remove any columns with more than 10% missing values. When the
+proportion of missing data is too high, imputation methods become less
+reliable and may introduce unnecessary bias into the dataset. By
+excluding these columns, we aim to preserve the integrity of the
+analysis and ensure the predictive model is built on robust and
+trustworthy data.
+
+```{r}
+threshold <- 0.1
+na_percentage <- data.frame((colSums((is.na(df))/nrow(df))))
+
+df <- df[, na_percentage <= threshold]
+```
+
+Once we have deleted all the columns that have more than 10% of missing
+values, lets see if there are any NaNs remaining:
+
+```{r}
+missing_values <- sum(is.na(df))
+```
+
+Currently, there are `r missing_values` missing values in the dataset
+that need to be addressed. The approach to handling missing values
+differs between numerical and categorical variables, so each will be
+treated separately to ensure an appropriate and effective imputation
+strategy:
+
+```{r}
+colSums(is.na(df)) 
+```
+
+For the numerical variables, the initial plan was to replace missing
+values with the column's median, as this is a common and robust
+imputation method. However, this approach can still introduce some
+degree of bias into the dataset. Given the large number of observations
+available, we determined that the potential risk of bias outweighs the
+benefit of retaining rows with missing values. Instead, we opted to
+remove rows with missing numerical values, as this approach ensures data
+integrity while still leaving a sufficient number of observations to
+build reliable and effective predictive models.
+
+```{r, warning=FALSE}
+df <- df %>%
+  filter(across(where(is.numeric), ~ !is.na(.)))
+#str(df)
+```
+
+For the categorical variables, rather than deleting rows with missing
+values, we opted to create a new category labeled "Unknown." This
+approach retains all observations while preserving the dataset's
+completeness, ensuring that no potentially valuable information is lost.
+By assigning missing values to the "Unknown" category, we can account
+for their presence in the analysis without introducing bias or
+distortion, allowing the predictive model to handle these cases
+effectively.
+
+```{r}
+df <- df %>%
+  mutate(across(c("emp_title", "emp_length", "title", "last_pymnt_d", "last_credit_pull_d"), ~ ifelse(is.na(.), "Unkown", .)))
+
+# the function above transformed these columns into characters, sowe are just going to transform back to factors
+df <- df %>%
+  mutate(across(where(is.character), as.factor))
+```
+
+To ensure that all missing values have been properly handled, the
+following code snippet counts the `NA` values across the entire dataset:
+
+```{r}
+final_missing_values <- sum(is.na(df))
+cat("Total missing values in the dataset:", final_missing_values, "\n")
+```
+
+<br>
+
+#### Addressing factor columns with too many levels:
+
+For models such as Logistic Regression, KNN, ANN, and SVM, the data
+needs to be encoded or dummified (a process explained later). This
+involves creating a separate column for each level of every categorical
+variable. However, some factors in the dataset have an excessively high
+number of levels, which can make the models computationally expensive
+and inefficient.
+
+To address this, we decided to set these high-cardinality variables to
+`NULL`, effectively excluding them from the analysis. While these
+variables may have some predictive power, the dataset contains
+sufficient remaining predictors to build accurate models without them.
+It is worth noting that in scenarios where computational power is not a
+limitation, this step could be skipped, and all variables could be
+included for a potentially more comprehensive analysis.
+
+```{r}
+df$emp_title <- NULL
+df$title <- NULL
+df$issue_d  <- NULL
+df$addr_state <- NULL
+df$zip_code <- NULL
+df$earliest_cr_line <- NULL
+df$last_pymnt_d <- NULL
+df$last_credit_pull_d <- NULL
+```
+
+<br>
+
+#### Getting a random sample of 10% of the dataset:
+
+After addressing the dataset's issues and ensuring it is properly
+treated, we decided to proceed with a random sample of 10% of the rows
+from the dataset. This step was introduced to accommodate current
+computational limitations, ensuring the modeling process remains
+efficient and manageable. However, it is important to note that in
+scenarios where computational resources are not a constraint, this step
+can be entirely skipped, allowing the full dataset to be utilized for
+potentially more robust model training.
+
+Here, we considered creating a balanced random sample, consisting of 50%
+random samples from negative cases (defaulted loans) and 50% random
+samples from positive cases (repaid loans). While this approach could
+potentially improve the performance of models that struggle with
+imbalanced datasets, we decided against it. Balancing the dataset
+artificially could misrepresent the actual distribution of the target
+variable and complicate the model's predictions on new, real-world data,
+where the distribution will remain imbalanced. By retaining the original
+distribution, we ensure the model's performance and predictions remain
+realistic and applicable to the actual business context.
+
+```{r}
+sample_size <- 0.1
+set.seed(12345)
+sample_rows <- sample(1:nrow(df), sample_size*nrow(df))
+sample_data <- df[sample_rows, ]
+#str(sample_data)
+```
+
+<br>
+
+#### Encoding Categorical Variables:
+
+As mentioned earlier, most of the models we will be using cannot handle
+categorical columns with more than two levels (i.e., non-binary
+categorical variables). To address this, we encode the dataset to
+transform these categorical variables into a format that the models can
+process effectively.
+
+This encoding process, known as dummification or one-hot encoding,
+converts each level of a categorical variable into its own separate
+column. For example, the `home_ownership` variable is transformed into
+new columns such as `ANY`, `MORTGAGE`, `OWN`, etc., with each row
+indicating the presence or absence of a specific level. Importantly, the
+encoding process excludes one column for each factor, which prevents
+issues with multicollinearity by avoiding redundant information. This
+ensures the dataset is both interpretable and compatible with the
+predictive models we are implementing.
+
+```{r}
+encoded_data <- as.data.frame(model.matrix(~ . -1, sample_data))
+#str(encoded_data)
+#summary(encoded_data)
+
+# To make the term 36/60 months without " "
+colnames(encoded_data) <- make.names(colnames(encoded_data))
+
+# Delete cuz is either all 0 or all 1s
+encoded_data$purposeeducational <- NULL
+encoded_data$policy_code <- NULL
+```
+
+<br>
+
+#### Scaling Numerical Variables: remember to adjust text based on SVM
+
+Finally, the last step of cleaning is scaling our data. Further on in
+our analysis, we will build models such as a KNN and a ANN; for these
+models, our numeric factors have to be comparable to one another. For
+this to happen, they have to be on the same scale, so we create a
+separate variable that contains scaled data for the those models. We
+utilize min max scaling in this instance, so each numeric variable is
+now on a scale of 0-1.
+
+```{r}
+minmax <- function(x) {
+  (x - min(x)) / (max(x)-min(x))
+}
+scaled_data <- as.data.frame(lapply(encoded_data, minmax))
+```
+
+**Business Note:** The data preparation process outlined above involved
+extensive steps to clean and structure the dataset for the upcoming
+analysis. While understanding these steps is not essential from a
+business perspective, it is important to note that the data has been
+thoroughly cleaned and prepared to ensure the analysis is accurate,
+reliable, and aligned with the project's objectives.
+
+------------------------------------------------------------------------
+
+# 2. Analysis of the Current Scenario
+
+**Business Note:** Before building the predictive models, this section
+will focus on understanding the current scenario of the firm and its
+loans. We will conduct some preliminary analyses to evaluate client
+behaviors and examine potential correlations with loan statuses. These
+insights will provide context for the predictive modeling process and
+may highlight key factors influencing loan outcomes.
+
+On this following graph we can see the distribution of the target
+variable.
+
+```{r, warning=FALSE, echo=FALSE}
+
+ggplot(df, aes(x = factor(y), fill = factor(y))) +
+  geom_bar(width = 0.6, show.legend = FALSE) +
+  scale_fill_manual(values = c("firebrick", "steelblue")) +
+  labs(
+    title = "Loans Paid (1) or Defaulted (0)",
+    x = "Loan Status",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(size = 12)
+  ) +
+  geom_text(stat = 'count', aes(label = scales::percent(..count../sum(..count..), accuracy = 0.1)),
+            vjust = -0.5, size = 4)
+
+```
+
+<br>
+
+**Business Note:** The graphic below depicts the bank’s current customer
+default distribution with approximately 6% of individuals defaulting on
+their loans while 94% do not. Although the percentage of defaulters
+appears small, the financial impact on the bank is notably significant.
+<br>
+
+```{r, echo=FALSE}
+# Some calculations for the graphics: revenues, losses, profit.
+
+# Total expected interest for each loan
+df$total_expected_interest <- df$funded_amnt * (df$int_rate/100)
+
+
+# Calculating Total Revenues - interest fees + late fees (received up to date)
+revenue_to_date <- sum(df$total_rec_int, na.rm = TRUE) + 
+                    sum(df$total_rec_late_fee, na.rm = TRUE) + 
+                    sum(df$recoveries, na.rm = TRUE)
+
+projected_revenue <- sum(
+  ifelse(df$y == 1, df$total_expected_interest - df$total_rec_int, 0),
+  na.rm = TRUE
+)
+
+total_revenue <- revenue_to_date + projected_revenue
+
+# Calculating Total Losses/Expenses - unpaid principal + unpaid interest
+total_losses <- sum(
+  ifelse(df$y == 0, df$out_prncp + (df$total_expected_interest - df$total_rec_int), 0),
+  na.rm = TRUE
+)
+
+# Calculating Total Profit
+total_profit <- total_revenue - total_losses
+```
+
+The following graph aims to provide a clear and straightforward
+representation of the company's current scenario. To create this visual,
+calculations on revenue and losses were performed, offering an overview
+of the financial impact of collected and uncollected loans. This helps
+to contextualize the firm's situation before diving into more detailed
+analyses.
+
+```{r echo=FALSE}
+# Create a data frame for the variables
+plot_data <- data.frame(
+  Category = c("Total Revenue", "Total Losses", "Total Profit"),
+  Amount = c(total_revenue, total_losses, total_profit)
+)
+
+# Reorder the Category factor to ensure the desired order in the plot
+plot_data$Category <- factor(plot_data$Category, levels = c("Total Revenue", "Total Losses", "Total Profit"))
+
+# Create the bar plot
+ggplot(plot_data, aes(x = Category, y = Amount, fill = Category)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(
+    title = "Comparison of Total Revenue, Losses, and Profit",
+    x = "Category",
+    y = "Amount ($)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(size = 12)
+  ) +
+  scale_fill_manual(values = c("#00AFBB", "#FC4E07", "#E7B800")) +
+  geom_text(
+    aes(label = scales::dollar_format(big.mark = ".", decimal.mark = ",", prefix = "$")(Amount)),
+    vjust = -0.5,
+    size = 4
+  )
+```
+
+**Business Note:** The total revenue from loans stands at
+**\$1,650,779,390**. However, the total losses incurred due to defaults
+amount to **\$167,030,367**, leaving the bank with a total profit of
+**\$1,482,749,023** after accounting for these losses. <br> While
+analyzing total amounts provides valuable insights, a percentage-based
+graph was also created, where each measurement is expressed as a
+percentage of total revenues (with revenues representing 100%). This
+approach is particularly useful for comparison, both now and in the
+conclusion. Since the number of rows will vary from now to the stacked
+model comparison, total figures would not be directly comparable. By
+using percentages, we ensure a consistent basis for evaluating
+performance and measuring the impact of the predictive models. <br>
+
+```{r, echo=FALSE}
+# Calculate percentages relative to Total Revenue
+plot_data <- plot_data %>%
+  mutate(Percentage = (Amount / Amount[Category == "Total Revenue"]) * 100)
+
+# Create the percentage bar plot
+ggplot(plot_data, aes(x = Category, y = Percentage, fill = Category)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(
+    title = "Percentage Breakdown Relative to Total Revenue",
+    x = "Category",
+    y = "Percentage of Revenue (%)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(size = 12)
+  ) +
+  scale_fill_manual(values = c("#00AFBB", "#FC4E07", "#E7B800")) +
+  geom_text(
+    aes(label = paste0(round(Percentage, 2), "%")),
+    vjust = -0.5,
+    size = 4
+  )
+```
+
+**Business Note:** While defaulted loans represent only 6% of the total
+loans granted, their financial impact is disproportionately high,
+contributing to over **10%** of the company's financial losses. This
+highlights the significant risk posed by even a small percentage of
+defaults.
+
+------------------------------------------------------------------------
+
+# 3. Unsupervised Learning
+
+<br>
+
+Once with the data cleaned and pre-processed, and the analysis of the
+current scenario concluded, we are ready to start with the unsupervised
+learning. <br>
+
+**Business Note:** This segment focuses on building seven prediction
+models—Logistic Regression, K-Nearest Neighbors, Neural Network, Support
+Vector Machine, Decision Tree, Random Forest, and XGBoost—to identify
+potential loan defaults. The goal is to determine if avoiding high-risk
+loans based on predictions can deliver better financial outcomes
+compared to the current approach. <br>
+
+## a. Split the data
+
+Data splitting is essential in model training as it enables us to
+evaluate a model's performance on data it hasn't encountered before. By
+dividing our data into training and test sets, we create two separate
+groups: one for training the model (the training set) and another for
+evaluating its performance (the test set). This method helps us avoid
+overfitting, where the model could learn the training data too well and
+struggle to generalize to new, unseen data.
+
+In this setup, we use a test split rate of **0.5**, dividing the dataset
+equally into 50% training and 50% testing for each model configuration.
+Given the large number of rows in the dataset, allocating half for
+training is sufficient to ensure robust model development while leaving
+ample data for testing. This approach provides a reliable basis for
+evaluating model performance and enables firmer analysis and comparison
+of financial results in the end of this report (as the test set is
+bigger). Moreover, the 50-50 split reduces computational demands for
+heavier models like Artificial Neural Networks (ANN) and Support Vector
+Machines (SVM), ensuring the modeling process remains efficient without
+compromising accuracy or insights.
+
+Also, we did separate splits for network models vs. the rest of them. We
+sample rows from the `scaled_data` dataset to create training and test
+sets for the K-Nearest Neighbors (KNN), Artificial Neural Network (ANN),
+while for all the other models we are splitting the `encoded_data`
+dataset, in which the data was not scaled.
+
+Scaling the dataset is crucial for models like K-Nearest Neighbors (KNN)
+and Artificial Neural Networks (ANN) because these algorithms are
+sensitive to the magnitude of the input features. In KNN, the distance
+between data points determines their classification or prediction, and
+unscaled data can give undue weight to features with larger numerical
+ranges. Similarly, ANN models rely on gradient-based optimization, where
+unscaled inputs can lead to inefficient or biased training due to larger
+feature values dominating the gradients. In contrast, models such as
+Logistic Regression, Support Vector Machines (SVM), Decision Trees,
+Random Forest, and XGBoost do not require scaling. Logistic Regression
+can handle unscaled data as it estimates probabilities directly. SVM
+uses kernel functions, and tree-based methods (Decision Trees, Random
+Forest, XGBoost) split data based on feature thresholds, which are
+scale-independent. Therefore, scaling is only necessary for KNN and ANN
+to ensure optimal performance, while it can be omitted for the other
+models.
+
+```{r}
+test_rate <- 0.5
+set.seed(12345)
+
+test_rows <- sample(1:nrow(sample_data), test_rate*nrow(sample_data))
+train_data <- sample_data[-test_rows, ]
+test_data <- sample_data[test_rows, ]
+
+# Log Regression, SVM, Decision Tree, Random Forest - Encoded
+train_encoded <- encoded_data[-test_rows, ]
+test_encoded <- encoded_data[test_rows, ]
+
+# KNN, ANN Split - Encoded and Scaled
+train_scaled <- scaled_data[-test_rows, ]
+test_scaled <- scaled_data[test_rows, ]
+```
+
+<br>
+
+## b. Logistic Regression Model
+
+Logistic Regression is a statistical model used for binary
+classification tasks, where the goal is to predict one of two possible
+outcomes (e.g., yes/no, default/no default). It estimates the
+probability of an event occurring by modeling the relationship between
+one or more independent variables and a binary dependent variable.
+Logistic Regression uses a sigmoid function to map predicted values to
+probabilities between 0 and 1, and it applies a threshold (commonly 0.5)
+to classify observations into one of the two categories. It is widely
+used for its simplicity, interpretability, and effectiveness in
+understanding the impact of predictor variables on the target outcome.
+
+```{r, cache = TRUE, warning = FALSE}
+log_regression <- glm(as.factor(y) ~ ., data = train_encoded, family = binomial)
+prediction_lr <- predict(log_regression, test_encoded, type = "response")
+
+#stepwise_lr <- step(log_regression, direction = "both", trace = 0)
+#prediction_stepwise <- predict(stepwise_lr, test_encoded, type = "response")
+
+binary_prediction_lr <- ifelse(prediction_lr < .25, 0, 1)
+
+cm_lr <- confusionMatrix(as.factor(binary_prediction_lr),
+                as.factor(test_encoded$y),
+                positive = "1")
+cm_lr
+```
+
+The confusion matrix for the Logistic Regression model provides the
+following insights:
+
+1.  **Accuracy**: The model achieved an accuracy of **97.56%**, which is
+    very high. This indicates that the Logistic Regression model is
+    effective at correctly classifying loan repayment outcomes.
+
+2.  **Kappa**: The Kappa statistic is **0.752**, showing substantial
+    agreement between predicted and actual loan statuses, beyond what is
+    expected by chance. This demonstrates good performance even with
+    some degree of class imbalance.
+
+3.  **Sensitivity**: The sensitivity is **99.42%**, meaning the model
+    performs exceptionally well in identifying loans that are likely to
+    be repaid (positive class). This is crucial for minimizing false
+    negatives.
+
+4.  **Specificity**: The specificity is **67.68%**, suggesting that the
+    model has moderate success in identifying defaulted loans (negative
+    class). While lower than sensitivity, it is still acceptable given
+    the overall performance.
+
+5.  **Positive Predictive Value (PPV)**: The PPV is **98.02%**,
+    indicating that when the model predicts a loan will be repaid, it is
+    correct the vast majority of the time. This is valuable for
+    decision-making regarding loan approvals.
+
+6.  **Balanced Accuracy**: The balanced accuracy, which averages
+    sensitivity and specificity, is **83.55%**, reflecting robust
+    overall performance across both classes.
+
+Overall, the Logistic Regression model demonstrates strong performance,
+with high accuracy and sensitivity ensuring that loans likely to be
+repaid are effectively identified. However, its specificity is
+relatively lower, highlighting a need for improvement in detecting
+defaulted loans. Despite this, the model remains a reliable tool for
+predicting loan repayment outcomes. The stepwise regression approach was
+again commented out due to computational demands and the satisfactory
+results of the simpler model. <br>
+
+## c. KNN Model
+
+The K-Nearest Neighbors (KNN) algorithm is a non-parametric,
+instance-based machine learning model used for classification and
+regression tasks. For classification, it works by identifying
+the `k` closest data points (neighbors) to a query point in the feature
+space and assigning the majority class of those neighbors to the query.
+The model relies heavily on the concept of distance (commonly Euclidean)
+and is sensitive to feature scaling. KNN is simple, intuitive, and
+effective for datasets where the relationship between features and
+target labels is not well-defined by a mathematical function.
+
+```{r, cache = TRUE}
+y_col <- which(colnames(train_scaled) == "y")
+prediction_knn <- knn(train = train_scaled[,-y_col], 
+                      test = test_scaled[,-y_col], 
+                      cl = train_scaled[,y_col], 
+                      k = 1) 
+#summary(prediction_knn)
+
+cm_knn <- confusionMatrix(as.factor(prediction_knn), as.factor(test_scaled$y), positive = "1")
+cm_knn
+```
+
+Before the analysis of the results we wanted to explain the choice of
+the `k`. With a highly imbalanced dataset, the majority class dominates,
+and using a larger `k` could exacerbate this issue by allowing more
+majority-class neighbors to influence the classification decision. By
+setting `k = 1`, the model relies solely on the closest neighbor, which
+helps avoid amplifying the imbalance effect and allows the model to
+focus on the local behavior of individual data points.
+
+The confusion matrix for the KNN model (k=1) provides the following
+insights:
+
+1.  **Accuracy**: The model achieved an accuracy of **93.03%**, which is
+    good but slightly lower than the Logistic Regression model. This
+    indicates that while the KNN model performs well overall, there is
+    some room for improvement, particularly in handling the negative
+    class.
+
+2.  **Kappa**: The Kappa statistic is **0.2762**, which reflects only
+    fair agreement between predictions and actual values. This suggests
+    that the model struggles to balance performance across the
+    imbalanced classes.
+
+3.  **Sensitivity**: The sensitivity is **97.13%**, demonstrating that
+    the model is highly effective at identifying loans that are likely
+    to be repaid (positive class). This is critical for ensuring
+    reliable predictions for the majority class.
+
+4.  **Specificity**: The specificity is **27.04%**, indicating that the
+    model has significant difficulty identifying defaulted loans
+    (negative class). This leads to a high number of false positives,
+    highlighting the impact of the class imbalance.
+
+5.  **Positive Predictive Value (PPV)**: The PPV is **95.54%**, meaning
+    that when the model predicts a loan will be repaid, it is correct
+    most of the time. This is beneficial for decision-making on loan
+    approvals.
+
+6.  **Balanced Accuracy**: The balanced accuracy, which averages
+    sensitivity and specificity, is **62.08%**, reflecting moderate
+    overall performance, but the model is biased toward the majority
+    class.
+
+The KNN model with `k=1` performs well in identifying loans likely to be
+repaid, as evidenced by its high sensitivity and PPV. However, it
+struggles to correctly classify defaulted loans, with low specificity
+and Kappa values. These weaknesses are likely due to the class imbalance
+and the use of `k=1`, which makes the model highly sensitive to local
+noise in the data. We attempted adjusting `k` to improve tis
+specificity, however, it did not work (likely due to the high imbalance
+already mentioned). Addressing the class imbalance (e.g., through
+resampling techniques) could improve the model’s performance in
+detecting the minority class, however we did not try to do it as we aim
+to use this regression on the stack model, and we need to maintain the
+same rows of train and test sets throughout all models to do so.
+
+## d. ANN Model
+
+An Artificial Neural Network (ANN) is a machine learning model inspired
+by the structure and functioning of the human brain. It consists of
+layers of interconnected nodes (neurons) that process input data through
+weighted connections. ANNs excel at modeling complex, non-linear
+relationships in data by learning patterns through backpropagation,
+where weights are adjusted iteratively to minimize errors. They are
+particularly powerful for tasks like image recognition, natural language
+processing, and predictive modeling, offering flexibility and
+adaptability for a wide range of problems.
+
+```{r, cache = TRUE}
+model_ann <- neuralnet(y ~ ., data = train_scaled, hidden = c(1), stepmax = 1e7, lifesign = "none", threshold = 0.1)
+plot(model_ann)
+
+prediction_ann <- predict(model_ann, newdata = test_scaled)
+binary_prediction_ann <- ifelse(prediction_ann > 0.25, 1, 0)
+
+cm_ann <- confusionMatrix(as.factor(binary_prediction_ann), as.factor(test_scaled$y))
+cm_ann
+```
+
+The confusion matrix for the Artificial Neural Network (ANN) model
+provides the following insights:
+
+1.  **Accuracy**: The model achieved an accuracy of **98.39%**,
+    indicating strong overall performance in classifying loan repayment
+    statuses. This high accuracy highlights the ANN's ability to capture
+    patterns in the data effectively.
+
+2.  **Kappa**: The Kappa statistic is **0.833**, reflecting strong
+    agreement between the model's predictions and the actual outcomes,
+    beyond chance. This demonstrates the ANN's reliability even in a
+    scenario with class imbalance.
+
+3.  **Sensitivity**: The sensitivity is **72.88%**, showing that the
+    model is moderately effective at correctly identifying loans that
+    will not be repaid (negative class). While this is a notable
+    improvement, there is still room for enhancement in detecting
+    defaulted loans.
+
+4.  **Specificity**: The specificity is **99.98%**, meaning the model is
+    nearly perfect at identifying loans that will be repaid (positive
+    class). This minimizes false positives, which is beneficial for
+    business decision-making.
+
+5.  **Positive Predictive Value (PPV)**: The PPV is **99.48%**,
+    indicating that when the model predicts a loan will be repaid, it is
+    almost always correct. This precision ensures high confidence in
+    positive predictions.
+
+6.  **Balanced Accuracy**: The balanced accuracy, which averages
+    sensitivity and specificity, is **86.43%**, reflecting the model’s
+    strong overall performance across both classes.
+
+The ANN model demonstrates exceptional accuracy, specificity, and
+precision, making it highly effective for predicting loans likely to be
+repaid. However, its sensitivity indicates some difficulty in
+identifying defaulted loans. Adjusting hyperparameters, such as
+increasing the number of hidden neurons or layers, could potentially
+enhance sensitivity, we did not do it due to computer power limitations.
+Nonetheless, this ANN configuration provides robust and reliable
+predictions with minimal trade-offs in computational efficiency.
+
+## e. SVM Model
+
+A Support Vector Machine (SVM) is a powerful supervised machine learning
+model used for classification and regression tasks. It works by finding
+the optimal hyperplane that separates data points into distinct classes
+with the maximum margin. The margin is the distance between the
+hyperplane and the nearest data points from each class, known as support
+vectors. SVMs are versatile and can handle linear and non-linear
+relationships in data by using kernel functions, which map the input
+features into higher-dimensional spaces where classes become more
+separable. This flexibility, combined with its robustness to overfitting
+in high-dimensional spaces, makes SVMs highly effective for complex
+classification problems.
+
+To identify the best-performing kernel for the Support Vector Machine
+(SVM) model, I implemented a function, `try_kernels`, that
+systematically tests various kernels and evaluates their performance.
+This function trains an SVM model using the specified kernel on the
+scaled training dataset (`train_scaled`) and generates predictions on
+the scaled test dataset (`test_scaled`). For each kernel, the function
+calculates and returns three key metrics from the confusion matrix:
+accuracy, kappa, and sensitivity. These metrics provide a comprehensive
+evaluation of the model's performance, capturing overall correctness,
+agreement beyond chance, and the ability to identify positive cases.
+
+The function is applied to a list of kernels (`kernels`), including
+"vanilladot", "polydot", "rbfdot", "tanhdot", "anovadot", "laplacedot",
+and "besseldot" using `sapply` to iterate over each kernel. This
+streamlined approach makes it easy to compare the results and select the
+most suitable kernel for the final SVM model based on performance
+metrics, ensuring optimal results for the analysis.
+
+```{r,cache=TRUE, warning = FALSE, message = FALSE}
+
+try_kernels <- function(kernel_name) {
+  suppressMessages({
+    model <- ksvm(as.factor(y) ~ ., data = train_scaled, kernel = kernel_name)
+  })
+  predictions <- predict(model, test_scaled)
+  cm <- confusionMatrix(as.factor(predictions), as.factor(test_scaled$y), positive = "1")
+  
+  accuracy <- cm$overall["Accuracy"]
+  kappa <- cm$overall["Kappa"]
+  sensitivity <- cm$byClass["Sensitivity"]
+  
+  # Return all metrics
+  return(c(accuracy = accuracy, kappa = kappa, sensitivity = sensitivity))
+}
+
+kernels <- c("vanilladot", "polydot", "rbfdot", "tanhdot", "anovadot", "laplacedot", "besseldot")
+sapply(kernels, try_kernels)
+
+suppressMessages({
+  model_svm <- ksvm(as.factor(y) ~ ., data = train_scaled, kernel = "vanilladot")
+})
+prediction_svm <- predict(model_svm, test_scaled)
+cm_svm <- confusionMatrix(as.factor(prediction_svm),
+                as.factor(test_scaled$y),
+                positive="1")
+cm_svm
+
+```
+
+Based on the results of the `try_kernels` function, the best kernel to
+apply to your SVM model is "vanilladot" (the linear kernel). Here's why:
+
+1.  Accuracy: The linear kernel ("vanilladot") achieved an accuracy
+    of 98.29%, which is the highest among all tested kernels (tied with
+    "polydot" and slightly better than "anovadot").
+
+2.  Kappa: The Kappa statistic for the linear kernel is 0.8213, also the
+    highest among the kernels. This indicates strong agreement between
+    predictions and true labels, beyond what is expected by chance, and
+    suggests the model handles class imbalance well.
+
+3.  Sensitivity: The sensitivity for "vanilladot" is 99.95%, indicating
+    that the model is excellent at identifying the positive class (loans
+    likely to be repaid). This is critical in scenarios where minimizing
+    missed positive cases is important.
+
+4.  Simplicity and Efficiency: Linear kernels are computationally less
+    expensive compared to more complex kernels like "rbfdot" or
+    "polydot," making them a more efficient choice when they perform
+    equally well or better.
+
+Once with the kernel chosen we can proceed to train and test the model.
+The confusion matrix for the Support Vector Machine (SVM) model with a
+linear kernel (`vanilladot`) provides the following insights:
+
+1.  **Accuracy**: The model achieved an accuracy of **98.29%**,
+    demonstrating excellent overall performance in predicting loan
+    repayment statuses. This high accuracy indicates the linear kernel
+    is well-suited for this dataset.
+
+2.  **Kappa**: The Kappa statistic is **0.8213**, reflecting strong
+    agreement between predictions and actual outcomes, beyond what would
+    occur by chance. This highlights the model's reliability in handling
+    imbalanced classes.
+
+3.  **Sensitivity**: The sensitivity is **99.95%**, indicating that the
+    SVM is nearly perfect at identifying loans that will be repaid
+    (positive class).
+
+4.  **Specificity**: The specificity is **71.56%**, meaning the model
+    performs moderately well at identifying loans that will default
+    (negative class). While specificity is lower than sensitivity, it is
+    sufficient given the strong overall performance.
+
+5.  **Positive Predictive Value (PPV)**: The PPV is **98.26%**, showing
+    that when the model predicts a loan will be repaid, it is correct
+    the vast majority of the time. This high precision is valuable for
+    reducing the risk of approving potentially defaulted loans.
+
+6.  **Balanced Accuracy**: The balanced accuracy, which averages
+    sensitivity and specificity, is **85.75%**, reflecting the model’s
+    robustness across both classes.
+
+The SVM model with the linear kernel demonstrates outstanding
+performance, particularly in accuracy and sensitivity, making it a
+reliable tool for predicting loan repayment outcomes. While the
+specificity could be improved to better detect defaulted loans, the
+model strikes a good balance between identifying repaid loans and
+minimizing false positives. <br>
+
+## f. Decision Tree Model
+
+A Decision Tree is a machine learning model that predicts outcomes by
+recursively splitting the dataset into subsets based on feature values.
+It starts with a root node representing the entire dataset, splits into
+decision nodes based on the most significant features, and ends at leaf
+nodes, which represent the final predictions or outcomes. Decision trees
+are widely used for classification and regression tasks due to their
+simplicity, interpretability, and ability to model complex, non-linear
+relationships.
+
+```{r, cache=TRUE}
+dt <- C5.0(as.factor(y) ~ ., data = train_encoded)
+#plot(dt)
+
+prediction_dt <- predict(dt, newdata = test_encoded)
+
+cm_dt <- confusionMatrix(as.factor(prediction_dt), 
+                         as.factor(test_encoded$y), 
+                         positive = "1")
+cm_dt
+```
+
+The confusion matrix for the Decision Tree model provides the following
+insights:
+
+1.  **Accuracy**: The model achieved an accuracy of **98.25%**,
+    indicating excellent overall performance in predicting loan
+    repayment outcomes. This high accuracy reflects the Decision Tree's
+    ability to capture meaningful patterns in the dataset.
+
+2.  **Kappa**: The Kappa statistic is **0.817**, signifying strong
+    agreement between predicted and actual outcomes beyond chance. This
+    highlights the Decision Tree's effectiveness in handling the
+    dataset's class imbalance.
+
+3.  **Sensitivity**: The sensitivity is **99.96%**, showing that the
+    model is nearly perfect at identifying loans likely to be repaid
+    (positive class). This minimizes false negatives, which is critical
+    for ensuring reliable predictions of repaid loans.
+
+4.  **Specificity**: The specificity is **70.79%**, indicating moderate
+    success in identifying loans that will default (negative class).
+    While specificity is lower than sensitivity, it is sufficient given
+    the Decision Tree's overall strong performance.
+
+5.  **Positive Predictive Value (PPV)**: The PPV is **98.22%**, meaning
+    that when the model predicts a loan will be repaid, it is correct
+    the vast majority of the time. This precision is valuable for
+    avoiding incorrect approvals of defaulted loans.
+
+6.  **Balanced Accuracy**: The balanced accuracy, which averages
+    sensitivity and specificity, is **85.37%**, reflecting robust
+    overall performance across both classes.
+
+The Decision Tree model demonstrates excellent accuracy, sensitivity,
+and precision, making it a reliable tool for predicting loans likely to
+be repaid. While the specificity could be improved to better identify
+defaulted loans, the model strikes a strong balance between minimizing
+false positives and achieving high accuracy. In order to try and improve
+the specificity, as it is in our business interest to **reduce false
+positives**, we will apply a cost matrix to the model. <br>
+
+### Decision tree with cost matrix
+
+The cost matrix is designed to adjust penalization weights for false
+positives and false negatives, prioritizing the reduction of the most
+critical error type. In this case, we aim to minimize false
+positives—instances where the model predicts a loan will be repaid, but
+it defaults. To achieve this, we apply a cost matrix that penalizes
+false positives 6 times more than false negatives, aligning the model
+with practical financial priorities.
+
+```{r, cache=TRUE}
+cost_matrix <- matrix(c(0, 1,
+                        6, 0),
+                      nrow = 2,
+                      byrow = TRUE)
+
+rownames(cost_matrix) <- colnames(cost_matrix) <- c("0", "1")
+
+dt2 <- C5.0(as.factor(y) ~ ., data = train_encoded, costs = cost_matrix)
+#plot(dt2)
+
+prediction_dt2 <- predict(dt2, newdata = test_encoded)
+
+cm_dt2 <- confusionMatrix(as.factor(prediction_dt2), as.factor(test_encoded$y), positive = "1")
+cm_dt2
+```
+
+As a result, most metrics show a slight reduction in performance, though
+the model remains robust. However, **specificity has increased**,
+aligning with the business goal of minimizing false positives. This
+trade-off is reasonable given the purpose of our prediction models. <br>
+
+## g. Random Forest Model
+
+A Random Forest model is an ensemble machine learning algorithm used for
+classification and regression tasks. It works by building multiple
+decision trees during training and aggregating their predictions to make
+a final decision. Each tree is trained on a random subset of the data
+and a random selection of features, introducing diversity among the
+trees and reducing the risk of overfitting. For classification, the
+model predicts the class with the majority vote from all trees, while
+for regression, it averages their outputs. Random Forests are highly
+effective for handling large datasets, managing missing data, and
+capturing non-linear relationships, making them versatile and robust for
+various predictive modeling tasks.
+
+```{r, cache=TRUE}
+
+set.seed(12345)
+model_rf <- randomForest(as.factor(y) ~ ., data = train_encoded, ntree=100)
+#plot(model_rf)
+
+prediction_rf <- predict(model_rf, newdata = test_encoded)
+
+cm_rf <- confusionMatrix(as.factor(prediction_rf),
+                as.factor(test_encoded$y),
+                positive="1")
+cm_rf
+```
+
+The confusion matrix for the Random Forest model provides the following
+insights:
+
+1.  **Accuracy**: The model achieved an accuracy of **98.26%**,
+    reflecting excellent overall performance in predicting loan
+    repayment outcomes. This high accuracy demonstrates the Random
+    Forest model's capability to capture complex patterns in the data.
+
+2.  **Kappa**: The Kappa statistic is **0.8162**, indicating strong
+    agreement between predictions and actual values beyond chance. This
+    highlights the model's reliability in handling the dataset's
+    imbalanced classes.
+
+3.  **Sensitivity**: The sensitivity is **99.99%**, showing the model is
+    nearly perfect at identifying loans that will be repaid (positive
+    class). This ensures minimal false negatives, which is crucial for
+    reliable classification of repaid loans.
+
+4.  **Specificity**: The specificity is **70.32%**, indicating moderate
+    success in identifying loans that will default (negative class).
+    While slightly lower, this level of specificity is acceptable given
+    the model's focus on minimizing false positives for the majority
+    class.
+
+5.  **Positive Predictive Value (PPV)**: The PPV is **98.19%**, meaning
+    that when the model predicts a loan will be repaid, it is correct
+    the vast majority of the time. This high precision is valuable for
+    ensuring confident predictions.
+
+6.  **Balanced Accuracy**: The balanced accuracy, which averages
+    sensitivity and specificity, is **85.16%**, reflecting robust
+    performance across both classes.
+
+The Random Forest model demonstrates excellent accuracy, sensitivity,
+and precision, making it a reliable tool for predicting loans likely to
+be repaid. While specificity could be improved to better detect
+defaulted loans, the model effectively balances its strengths,
+especially in identifying and correctly classifying repaid loans. Its
+robustness and ability to handle non-linear relationships make it a
+strong choice for predicting loan repayment outcomes. Additionally, the
+ensemble nature of Random Forest ensures high stability and reliability
+in predictions. <br>
+
+## h. XGBoost Model
+
+XGBoost (Extreme Gradient Boosting) is a powerful and scalable machine
+learning algorithm based on decision tree ensembles, designed for
+classification and regression tasks. It uses a gradient boosting
+framework, where models are built sequentially, and each new model
+corrects the errors of its predecessor. XGBoost stands out for its
+efficiency, regularization techniques to reduce overfitting, and ability
+to handle missing data. It supports parallel processing and tree
+pruning, making it computationally efficient even with large datasets.
+Its adaptability to handle non-linear relationships and high-dimensional
+data makes it a top choice for complex predictive modeling tasks, often
+delivering superior performance in competitions and real-world
+applications.
+
+```{r, cache=TRUE}
+set.seed(12345)
+labels <- train_encoded[, y_col]
+
+model_xgb <- xgboost(data = as.matrix(train_encoded[, -y_col]),
+                    label = as.matrix(labels),
+                    nrounds = 100,
+                    objective = "binary:logistic",
+                    verbose = 0)
+
+prediction_xgb <- predict(model_xgb, as.matrix(test_encoded[, -y_col]))
+binary_prediction_xgb <- ifelse(prediction_xgb > 0.5, 1, 0)
+
+
+cm_xgb <- confusionMatrix(
+  as.factor(binary_prediction_xgb),
+  as.factor(test_encoded[, y_col]), 
+  positive="1"
+)
+cm_xgb
+```
+
+The confusion matrix for the XGBoost model provides the following
+insights:
+
+1.  **Accuracy**: The model achieved an accuracy of **98.34%**,
+    indicating excellent overall performance in predicting loan
+    repayment outcomes. This high accuracy demonstrates the strength of
+    XGBoost in handling complex datasets.
+
+2.  **Kappa**: The Kappa statistic is **0.8275**, reflecting strong
+    agreement between predictions and actual outcomes beyond chance.
+    This indicates that the model handles the class imbalance
+    effectively.
+
+3.  **Sensitivity**: The sensitivity is **99.95%**, showing that the
+    model is nearly perfect at identifying loans that will be repaid
+    (positive class). This ensures a minimal number of false negatives,
+    which is critical for ensuring reliable predictions for the majority
+    class.
+
+4.  **Specificity**: The specificity is **72.41%**, meaning the model
+    performs moderately well at identifying defaulted loans (negative
+    class). While lower than sensitivity, it still represents a balanced
+    trade-off.
+
+5.  **Positive Predictive Value (PPV)**: The PPV is **98.31%**,
+    indicating that when the model predicts a loan will be repaid, it is
+    correct the vast majority of the time. This high precision ensures
+    confidence in positive predictions.
+
+6.  **Balanced Accuracy**: The balanced accuracy, which averages
+    sensitivity and specificity, is **86.18%**, reflecting robust
+    performance across both classes.
+
+The XGBoost model demonstrates exceptional accuracy, sensitivity, and
+precision, making it one of the best-performing models for predicting
+loan repayment outcomes. Its specificity, while slightly lower, is still
+acceptable given the overall strong performance. XGBoost's ability to
+handle class imbalances, non-linear relationships, and feature
+importance makes it a highly effective and reliable tool for this
+analysis. With its strong predictive power and balanced accuracy,
+XGBoost is a top contender for deployment in scenarios requiring robust
+loan repayment predictions. <br>
+
+## i. Stacked Model
+
+**Business Note:** After developing and training seven individual
+models, we will combine their strengths by creating a stacked model.
+This approach leverages the predictions from all the models to build a
+final, more robust model that capitalizes on the unique strengths of
+each. By combining insights from multiple algorithms, the stacked model
+aims to improve prediction accuracy and reliability, providing a
+comprehensive solution for identifying loan repayment outcomes. This
+method ensures a more confident and data-driven approach to
+decision-making.
+
+The first step in building a stacked model is to consolidate all
+predictions from the individual models into a single dataset. This
+dataset will serve as the input for the stacked model, allowing it to
+analyze and learn from the combined outputs of the base models.
+Alongside the predictions, it is essential to include the target
+variable from the test dataset, as this provides the ground truth needed
+for training and evaluating the stacked model. By unifying the
+predictions and the target variable, we create a comprehensive dataset
+that captures the strengths and weaknesses of each individual model,
+enabling the stacked model to make more accurate and reliable
+predictions. The code below demonstrates how this process is
+implemented:
+
+```{r, cache=TRUE}
+response <- test_data$y
+all_predictions <- data.frame(lr = binary_prediction_lr, 
+                              knn = prediction_knn, 
+                              ann = binary_prediction_ann, 
+                              svm = prediction_svm, 
+                              dt = prediction_dt,
+                              rf = prediction_rf,
+                              xgb = binary_prediction_xgb, 
+                              response)
+#str(all_predictions)
+
+# Converting all into factors
+all_predictions$lr <- as.factor(all_predictions$lr)
+all_predictions$ann <- as.factor(all_predictions$ann)
+all_predictions$xgb <- as.factor(all_predictions$xgb)
+all_predictions$response <- as.factor(all_predictions$response)
+```
+
+Once the new dataset is created, the next step is to split it into
+training and testing subsets. This follows the same concept as the
+earlier data preparation, where the training subset is used to develop
+the stacked model, and the testing subset is reserved for evaluating its
+performance. By maintaining this separation, we ensure that the stacked
+model is validated on unseen data, providing an unbiased assessment of
+its predictive capabilities.
+
+The training subset will include the predictions from the base models
+and the target variable, enabling the stacked model to learn how to best
+combine the individual predictions. The testing subset will then be used
+to evaluate the accuracy and reliability of the stacked model, ensuring
+its readiness for practical application. The code below demonstrates
+this process:
+
+```{r, cache=TRUE}
+test_rate <- 0.5
+set.seed(123)
+
+test_prediction_rows <- sample(1:nrow(all_predictions), test_rate*nrow(all_predictions))
+train_predictions <- all_predictions[-test_prediction_rows, ]
+test_predictions <- all_predictions[test_prediction_rows, ]
+```
+
+Now, we proceed to create the stacked model, which is built as a
+decision tree applied to the dataset containing all the predictions from
+the individual models. The stacked model leverages the combined
+predictions of these models to make a final decision, improving overall
+predictive performance. By using a decision tree, the stacked model
+learns to identify patterns in how the base model predictions interact
+and which combinations are most indicative of the target outcome.
+
+The decision tree serves as a meta-model, optimizing the strengths of
+the individual models and minimizing their weaknesses. This approach
+ensures that the final predictions are more robust and accurate, as they
+are derived from the collective insights of all the base models. The
+code snippet below illustrates the creation of the stacked model.
+
+```{r,cache=TRUE}
+stack_model <- C5.0(as.factor(response) ~ ., data = train_predictions)
+#plot(stack_model)
+
+prediction_stack <- predict(stack_model, newdata = test_predictions)
+
+cm_stack <- confusionMatrix(as.factor(prediction_stack),
+                            as.factor(test_predictions$response),
+                            positive="1")
+cm_stack
+```
+
+The confusion matrix for the stacked model provides the following
+insights:
+
+1.  **Accuracy**: The stacked model achieved an accuracy of **98.33%**,
+    demonstrating excellent overall performance in predicting loan
+    repayment outcomes. This high accuracy highlights the effectiveness
+    of combining multiple model predictions into a single, cohesive
+    solution.
+
+2.  **Kappa**: The Kappa statistic is **0.8272**, indicating strong
+    agreement between the model's predictions and actual outcomes,
+    beyond chance. This suggests that the stacked model handles class
+    imbalances effectively.
+
+3.  **Sensitivity**: The sensitivity is **99.97%**, meaning the model is
+    almost perfect at identifying loans that will be repaid (positive
+    class). This ensures minimal false negatives, a critical factor for
+    predicting repaid loans accurately.
+
+4.  **Specificity**: The specificity is **72.16%**, indicating moderate
+    performance in identifying defaulted loans (negative class). While
+    lower than sensitivity, this is balanced by the model's overall
+    strength in classifying the positive class.
+
+5.  **Positive Predictive Value (PPV)**: The PPV is **98.29%**,
+    demonstrating that the model is highly reliable when predicting
+    loans that will be repaid. This precision is crucial for reducing
+    risks associated with misclassified defaulted loans.
+
+6.  **Balanced Accuracy**: The balanced accuracy, which averages
+    sensitivity and specificity, is **86.06%**, reflecting robust
+    overall performance across both classes.
+
+The stacked model effectively combines the strengths of the individual
+base models, resulting in exceptional accuracy, sensitivity, and
+precision. While specificity could still be improved, the balanced
+accuracy indicates that the model performs well across both classes. By
+leveraging the insights from all the base models, the stacked model
+provides a highly reliable and comprehensive solution for predicting
+loan repayment outcomes. This approach ensures informed and confident
+decision-making, making it a valuable asset for the business.
+
+To enhance the specificity of our final stacked model, which is crucial
+for our business purpose, we will implement a **cost matrix** to assign
+greater penalties to false positives. By doing so, the model will
+prioritize minimizing the misclassification of defaulted loans (negative
+class), thus improving its ability to correctly identify them.
+
+This approach aligns with the strategy used previously for the decision
+tree model, where a cost matrix was applied to adjust the model's focus
+based on business needs. The cost matrix ensures that the model's
+predictions better reflect the practical implications of
+misclassifications, especially in scenarios where avoiding false
+positives is as important as achieving high overall accuracy.
+
+The updated model with the cost matrix will provide a more balanced
+performance, ensuring it meets both operational and business objectives
+effectively.
+
+```{r, cache=TRUE}
+cost_matrix <- matrix(c(0, 1,   
+                       50, 0),  
+                       nrow = 2,
+                       byrow = TRUE)
+rownames(cost_matrix) <- colnames(cost_matrix) <- c("0", "1")
+
+stack2_model <- C5.0(as.factor(response) ~ ., data = train_predictions, costs = cost_matrix)
+
+prediction_stack2 <- predict(stack2_model, newdata = test_predictions)
+
+cm_stack2 <- confusionMatrix(as.factor(prediction_stack2),
+                             as.factor(test_predictions$response),
+                             positive="1")
+cm_stack2
+```
+
+After applying a cost matrix to penalize false positives more heavily,
+the updated stacked model provides the following insights:
+
+1.  **Accuracy**: The model achieved an accuracy of **98.29%**,
+    maintaining excellent overall performance. The slight reduction
+    compared to the previous stacked model reflects the trade-off
+    introduced by prioritizing specificity.
+
+2.  **Kappa**: The Kappa statistic is **0.8253**, indicating strong
+    agreement between predictions and actual outcomes, beyond chance.
+    This suggests the model continues to handle class imbalance
+    effectively, even with the adjusted cost matrix.
+
+3.  **Sensitivity**: The sensitivity is **99.87%**, showing that the
+    model remains highly effective at identifying loans that will be
+    repaid (positive class). This ensures that very few repaid loans are
+    misclassified as defaulted.
+
+4.  **Specificity**: The specificity improved to **73.01%**, reflecting
+    a stronger ability to identify defaulted loans (negative class).
+    This improvement is directly attributable to the cost matrix, which
+    penalizes false positives more heavily.
+
+5.  **Positive Predictive Value (PPV)**: The PPV is **98.34%**,
+    demonstrating that the model is still highly reliable when
+    predicting loans that will be repaid. This high precision ensures
+    confident predictions for the majority class.
+
+6.  **Balanced Accuracy**: The balanced accuracy, which averages
+    sensitivity and specificity, is **86.44%**, representing a slight
+    improvement and reflecting better performance across both classes.
+
+The introduction of the cost matrix successfully improved the model's
+specificity, enhancing its ability to detect defaulted loans while
+maintaining strong sensitivity and accuracy. This adjustment aligns the
+model more closely with the business goal of minimizing false positives,
+ensuring a balanced and effective predictive solution. The updated
+stacked model provides greater reliability in identifying defaulted
+loans, making it an even more valuable tool for informed
+decision-making. <br>
+
+## j. Comparison of the metrics from all models
+
+With all the models built, trained, and tested, we compiled their key
+performance metrics — **Accuracy**, **Specificity**, **Sensitivity**,
+and **Kappa** — into a single table for comparison. This allows us to
+evaluate how each model performs across these metrics and identify their
+strengths and weaknesses. Below is the table summarizing the results:
+
+```{r,, echo=FALSE}
+metrics <- data.frame(
+  Model = c("Logistic Regression", "KNN", "ANN", "Vanilladot SVM", "Decision Tree", "Random Forest", "XG Boost", "Final Stack Model"),
+  Accuracy = c(cm_lr$overall["Accuracy"],
+               cm_knn$overall["Accuracy"],
+               cm_ann$overall["Accuracy"],
+               cm_svm$overall["Accuracy"],
+               cm_dt2$overall["Accuracy"],
+               cm_rf$overall["Accuracy"],
+               cm_xgb$overall["Accuracy"],
+               cm_stack2$overall["Accuracy"]),
+  Specificity = c(cm_lr$byClass["Specificity"],
+                  cm_knn$byClass["Specificity"],
+                  cm_ann$byClass["Specificity"],
+                  cm_svm$byClass["Specificity"],
+                  cm_dt2$byClass["Specificity"],
+                  cm_rf$byClass["Specificity"],
+                  cm_xgb$byClass["Specificity"],
+                  cm_stack2$byClass["Specificity"]),
+  Sensitivity = c(cm_lr$byClass["Sensitivity"],
+                  cm_knn$byClass["Sensitivity"],
+                  cm_ann$byClass["Sensitivity"],
+                  cm_svm$byClass["Sensitivity"],
+                  cm_dt2$byClass["Sensitivity"],
+                  cm_rf$byClass["Sensitivity"],
+                  cm_xgb$byClass["Sensitivity"],
+                  cm_stack2$byClass["Sensitivity"]),
+  Kappa = c(cm_lr$overall["Kappa"],
+            cm_knn$overall["Kappa"],
+            cm_ann$overall["Kappa"],
+            cm_svm$overall["Kappa"],
+            cm_dt2$overall["Kappa"],
+            cm_rf$overall["Kappa"],
+            cm_xgb$overall["Kappa"],
+            cm_stack2$overall["Kappa"])
+)
+
+# Print the metrics table
+print(metrics)
+```
+
+In the given business scenario, where recognizing false positives
+(individuals predicted to repay loans but who actually default) is
+critical, Specificity becomes the key metric. This is because
+Specificity measures the model's ability to correctly identify the
+negative class (defaulted loans), thereby minimizing false positives.
+
+From the table, here are the insights:
+
+1.  Logistic Regression performs well overall but has lower Specificity,
+    meaning it struggles to identify defaulted loans, leading to more
+    false positives.
+
+2.  KNN has the lowest Specificity, making it unsuitable for this
+    business context despite its decent Sensitivity. It would result in
+    excessive false positives.
+
+3.  ANN excels in Specificity, nearly perfect at identifying defaulted
+    loans, but has low Sensitivity, which might result in overlooking
+    some repayable loans.
+
+4.  SVM balances Sensitivity and Specificity, with reasonable
+    performance in identifying defaulted loans while maintaining
+    excellent accuracy and Sensitivity.
+
+5.  Decision Tree performs relatively well in Specificity, striking a
+    balance between recognizing defaulted loans and maintaining good
+    overall performance.
+
+6.  Random Forest delivers strong Sensitivity but moderate Specificity,
+    making it less ideal for minimizing false positives in this context.
+
+7.  XGBoost strikes a good balance, with improved Specificity and high
+    Sensitivity, making it a solid choice for this business scenario.
+
+8.  The Stacked Model, incorporating insights from all models, offers a
+    balanced approach. Its improved Specificity and strong Sensitivity
+    make it particularly suited for the business objective. <br>
+
+### Recommendation:
+
+For the given business goal of reducing false positives (individuals
+predicted to repay loans but who actually default) is critical.
+Therefore, Specificity becomes the key metric. This is because
+Specificity measures the model's ability to correctly identify the
+negative class (defaulted loans), thereby minimizing false positives.
+
+-   ANN is the best at minimizing false positives due to its nearly
+    perfect Specificity. However, its low Sensitivity might not
+    generalize well across all scenarios.
+
+-   The Final Stacked Model emerges as the best compromise, offering a
+    strong balance between Specificity (77.10%) and Sensitivity
+    (95.51%). It effectively identifies defaulted loans while
+    maintaining overall accuracy and reliability.
+
+Thus, the **Final Stacked Model** is the recommended choice, aligning
+well with the business priorities of reducing false positives while
+ensuring robust overall performance.
+
+**Business Note:** We have reached the conclusion of the predictive
+modeling phase and finalized the stacked model, which integrates the
+strengths of all individual models developed in this project. This final
+model offers a comprehensive and accurate approach to predicting loan
+defaults, providing valuable insights for decision-making. In the next
+phase, we will evaluate the financial impact of implementing this model,
+focusing on how it can reduce losses from defaulted loans and improve
+overall profitability for the company.
+
+------------------------------------------------------------------------
+
+# 4. Conclusion
+
+<br> **Business Note:** In this conclusion segment we want to test if
+the model we have built can bring any financial benefits for the
+business in reducing the losses on defaulted loans.
+
+To proceed, we need to create a new dataset that includes the rows from
+the second split into the test data. This dataset will be augmented with
+a new column containing the predictions from the **final stacked
+model**. The purpose of this column is to indicate which rows the model
+predicts as **positive** (1 = loan repaid). This setup allows us to
+clearly identify which loans the model would approve, enabling further
+analysis of its financial impact.
+
+```{r}
+new_df <- test_data[test_prediction_rows, ]
+new_df <- new_df %>%
+    mutate(prediction = prediction_stack2)
+
+#str(new_df)
+```
+
+To validate that the random sample used for testing retains the overall
+distribution of the target variable, we will plot the same distribution
+graph as used in the initial analysis. This step ensures that the test
+data is representative of the original dataset, providing reliable and
+unbiased insights when evaluating the predictions of the final stacked
+model.
+
+```{r, echo=FALSE}
+ggplot(new_df, aes(x = factor(y), fill = factor(y))) +
+  geom_bar(width = 0.6, show.legend = FALSE) +
+  scale_fill_manual(values = c("firebrick", "steelblue")) +
+  labs(
+    title = "Distribution of Target Variable Levels",
+    x = "Target Variable",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(size = 12)
+  ) +
+  geom_text(stat = 'count', aes(label = scales::percent(..count../sum(..count..), accuracy = 0.1)),
+            vjust = -0.5, size = 4)
+```
+
+As expected, the random sample from the test data follows a very
+simmilar distribution to the entire dataset.
+
+```{r, echo=FALSE}
+# We do the same calculations as before but now on a filtered dataset in which we only consider the rows the final stacked model predicted as 1. 
+
+# Total expected interest for each loan
+new_df <- new_df %>%
+  filter(prediction == 1)
+
+new_df$total_expected_interest <- new_df$funded_amnt * (new_df$int_rate/100)
+
+
+# Calculating Total Revenues - interest fees + late fees (received up to date)
+new_revenue_to_date <- sum(new_df$total_rec_int, na.rm = TRUE) + 
+                       sum(new_df$total_rec_late_fee, na.rm = TRUE) + 
+                       sum(new_df$recoveries, na.rm = TRUE)
+
+new_projected_revenue <- sum(
+    ifelse(new_df$y == 1, new_df$total_expected_interest - new_df$total_rec_int, 0),
+    na.rm = TRUE
+)
+
+
+new_total_revenue <- new_revenue_to_date + new_projected_revenue
+
+# Calculating Total Losses/Expenses - unpaid principal + unpaid interest
+
+new_total_losses <- sum(
+  ifelse(new_df$y == 0, new_df$out_prncp + (new_df$total_expected_interest - new_df$total_rec_int), 0),
+  na.rm = TRUE
+)
+
+new_total_profit <- new_total_revenue - new_total_losses
+```
+
+**Business Note:** We will now look at the same financial graphic we
+have done for the overall analysis but now with the model applied,
+meaning, only offering loans for the people the model predicted would
+repaid them. What would be the performance if we only conceded loans to
+people the model predict are going to pay back?
+
+```{r, echo=FALSE}
+# Create a data frame for the variables
+new_plot_data <- data.frame(
+  Category = c("Total Revenue", "Total Losses", "Total Profit"),
+  Amount = c(new_total_revenue, new_total_losses, new_total_profit)
+)
+
+# Reorder the Category factor to ensure the desired order in the plot
+new_plot_data$Category <- factor(new_plot_data$Category, levels = c("Total Revenue", "Total Losses", "Total Profit"))
+
+# Create the bar plot
+ggplot(new_plot_data, aes(x = Category, y = Amount, fill = Category)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(
+    title = "Comparison of Total Revenue, Losses, and Profit",
+    x = "Category",
+    y = "Amount ($)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = c("#00AFBB", "#FC4E07", "#E7B800")) +
+  geom_text(
+    aes(label = scales::dollar_format(big.mark = ".", decimal.mark = ",", prefix = "$")(Amount)),
+    vjust = -0.5,
+    size = 4
+  )
+```
+
+Although evaluating the financial impact using overall values is
+insightful, it can be challenging to compare these results with the
+current scenario since the total values differ due to the use of
+different datasets. As previously explained, the total values are not
+directly comparable because the model was applied to a subset of the
+data.
+
+To address this, we will create a percentage-based graphic, similar to
+the one used earlier. This approach normalizes the results, presenting
+each metric (e.g., revenue, losses) as a percentage of total revenue. By
+using percentages, we can directly compare the financial outcomes with
+and without the model, regardless of the differences in dataset size or
+composition.
+
+This percentage-based visualization will provide a clearer understanding
+of the relative financial benefits of implementing the model, enabling a
+fair and objective comparison with the current scenario.
+
+```{r, echo=FALSE}
+# Calculate percentages relative to Total Revenue
+new_plot_data <- new_plot_data %>%
+  mutate(Percentage = (Amount / Amount[Category == "Total Revenue"]) * 100)
+
+# Create the percentage bar plot
+ggplot(new_plot_data, aes(x = Category, y = Percentage, fill = Category)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(
+    title = "Percentage Breakdown Relative to Total Revenue",
+    x = "Category",
+    y = "Percentage of Revenue (%)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(size = 12)
+  ) +
+  scale_fill_manual(values = c("#00AFBB", "#FC4E07", "#E7B800")) +
+  geom_text(
+    aes(label = paste0(round(Percentage, 2), "%")),
+    vjust = -0.5,
+    size = 4
+  )
+
+```
+
+<br>
+
+### a. Business Case Conclusion:
+
+**Before Applying the Model:**
+
+Prior to using the model, total losses accounted for **10.12%** of total
+revenue, reflecting a significant portion of loans that resulted in
+financial losses. Consequently, total profits represented **89.88%** of
+total revenue, indicating profitability but leaving room for improvement
+due to the impact of defaulted loans.
+
+**After Applying the Model:**
+
+With the predictive model implemented, total losses decreased to
+**7.76%** of total revenue, demonstrating a substantial reduction in
+financial losses by identifying and avoiding high-risk loans.
+Simultaneously, total profit increased to **92.24%** of total revenue,
+highlighting an improvement in profitability as a result of more
+informed loan approval decisions.
+
+[**Key Insights:**]{.underline}
+
+1.  **Reduction in Losses**: The model reduced losses by **2.36
+    percentage points** (from 10.12% to 7.76%), showcasing its
+    effectiveness in minimizing exposure to default risks. While this
+    percentage change might not initially appear significant, 2.36% of
+    the overall revenue accounts to **3.912,393.604 dollars**.This
+    financial impact highlights the meaningful contribution of the
+    predictive model in improving the company’s bottom line.
+
+2.  **Increase in Profitability**: Profitability improved by **2.36
+    percentage points** (from 89.88% to 92.24%), reflecting the
+    financial benefits of prioritizing loans with higher likelihoods of
+    repayment.
+
+3.  **Enhanced Risk Management**: The predictive model successfully
+    improved the balance between risk and reward by reducing the
+    proportion of loans that result in losses while maintaining a high
+    level of revenue generation. <br>
+
+The comparison underscores the financial advantages of implementing the
+predictive model. By leveraging its ability to filter high-risk loans,
+the company achieves a more optimized lending strategy, reducing losses
+and enhancing overall profitability. This demonstrates the model's
+strategic value in improving the company’s financial outcomes and risk
+management practices.
+
+<br>
+
+### b. Lessons Learned and Improvement Points
+
+Throughout this project, we encountered numerous decision points that
+involved meaningful trade-offs and required careful consideration. For
+example, determining whether to balance the dataset or deciding on the
+train/test split ratio were practical challenges that sparked valuable
+discussions. These decisions highlighted an essential aspect of data
+science: even in a mathematically precise and seemingly objective field,
+there are no universally "correct" answers. Instead, each decision
+depends on the context, objectives, and constraints of the project.
+Reflecting on these trade-offs underscored the importance of aligning
+technical choices with real-world implications and business goals.
+
+Regarding areas for improvement, the primary limitation we faced was
+computational power. The dataset was exceptionally large, providing an
+opportunity to develop highly accurate and complex models. However, the
+lack of sufficient computational resources constrained our ability to
+explore more sophisticated approaches. For instance, it would have been
+valuable to implement a stepwise logistic regression or train a deeper
+Artificial Neural Network (ANN) with additional layers and neurons.
+These methods could have potentially yielded even better results but
+were beyond our computational capacity. <br>
+
+### c. Overall Project and Course Conclusion
+
+The overarching conclusion of this report is that predictive models are
+revolutionizing industries and reshaping markets. However, the
+effectiveness of these models is intrinsically tied to the quality and
+relevance of their input data. As the volume of data being collected
+continues to grow exponentially, the potential for predictive models to
+become even more accurate and impactful is immense.
+
+In the context of our specific project, we demonstrated how relatively
+simple predictive models can generate substantial value for a business
+with minimal implementation costs. The potential to increase profits by
+nearly 4 million dollars solely by integrating these models into
+decision-making processes is a striking outcome. It underscores the
+transformative power of data-driven strategies.
+
+Lastly, this project serves as a reminder of the broader potential of
+advanced predictive analytics. If such results can be achieved by a team
+of university students with limited resources, one can only imagine the
+possibilities unlocked by cutting-edge predictive models deployed by
+industry leaders with access to high-end computational capabilities.
+These tools have the power to shape and transform entire industries,
+paving the way for smarter, more efficient, and highly innovative
+business strategies.

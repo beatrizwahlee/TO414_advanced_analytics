@@ -1,0 +1,481 @@
+---
+title: "Final Quiz"
+author: "Beatriz Wahle"
+date: "2024-11-17"
+output: 
+  html_document:
+    theme: yeti
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Telecom Data Churn
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+# All Libraries used in this file:
+library(class)  # For KNN
+library(caret)  # For Confusion Matrix
+library(ggplot2) # For plotting graphics
+library(kernlab) # For SVM
+library(C50) # For Decision Trees
+library(randomForest) # For Random Forest
+```
+
+### Introduction
+
+This Individual Final Project will consist of two main parts, a stacked
+model predictive modelling approach and an implementation of the
+prediction model. Before getting into an explanation to each, lets have
+an overview of the dataset.
+
+**Dataset Overview: Telco Customer Churn**
+
+The dataset analyzed is the Telco Customer Churn dataset, which contains
+information on 7,043 customers of a telecommunications company. The
+primary objective of this dataset is to predict customer churn, i.e.,
+whether a customer will discontinue the service (Churn) based on various
+customer demographics, account information, and service usage metrics.
+The target variable Churn is a categorical variable with two levels: Yes
+(indicating churn) and No (indicating retention).
+
+Regarding the structure of the data: the dataset includes 21 variables,
+which are a mix of categorical and numerical data types.
+
+**Part 1: Stacked Model Predictive Modelling Approach**
+
+In this first part of the project we will work with building different
+prediction models, for instance a Logistic Regression, a Support Vector
+Machine, and a KNN. Although it was aready explained what Churn is, it
+is also importat to grasp why it's prediction matter.
+
+[Why Predict Churn?]{.underline}
+
+-   Financial Impact: Churn results in revenue loss for the company, and
+    predictive insights can help in designing targeted retention
+    campaigns, reducing costs associated with customer acquisition.
+
+-   Competitive Advantage: Minimizing churn ensures better customer
+    retention compared to competitors in the telecommunications market.
+
+------------------------------------------------------------------------
+
+### 1. Get the data
+
+The first step before getting into the part 1 of building models is
+getting the dataset. This is what I an going to do in the following
+snippet. Apart from reading the csv file, the function
+`stringsAsFactors = T` will transform the string columns into factors,
+making it easier for processes on further steps.
+
+```{r}
+cust_data <- read.csv("TelcoChurn.csv", stringsAsFactors = T)
+```
+
+With the data loaded, lets look at its summary and structure before any
+pre-processing measures.
+
+```{r}
+summary(cust_data)
+str(cust_data)
+```
+
+------------------------------------------------------------------------
+
+### 2. Clean the data
+
+Once we have the data, it is always fundamental to check for missing
+values. The code below will count the total of missing values (if any).
+
+```{r}
+missing_values <- sum(is.na(cust_data))
+```
+
+The dataset has `r missing_values` missing values and we need to handle
+those. Let's look at which columns have missing values:
+
+```{r}
+data.frame(colSums(is.na(cust_data)))
+```
+
+As we can see, the only column with missing values is the
+`TotalCharges`. Since it is a numeric column, we could input the mean or
+the median on those missing values, however, that can introduce a small
+bias. As there are only 11 rows out of the 7043 observations, that
+shouldn't justify the exclusoin of the entire column. I will choose to
+simply delete those rows.
+
+```{r}
+cust_data <- na.omit(cust_data)
+
+# Check there are no missing values
+sum(is.na(cust_data))
+```
+
+Now that we do not have any missing values, we can move on to the next
+steps of pre-processing.
+
+**Deleting meaningless columns:**
+
+The column `customerID` should not aggregate value to the prediction
+models and therefore will be deleted.
+
+```{r}
+cust_data$customerID <- NULL
+```
+
+If we look back to the data structure, we can see that the target column
+`Churn` is a factor with two levels. These are coded as 1 and 2 (as
+counting in R starts on 1, differently than Python or other languages
+that counting starts in 0). Simply for a personal choice of formality
+(to maintain the positive class as 1), I will transform the factors into
+a numeric column of 0, 1.
+
+```{r}
+str(cust_data$Churn)
+cust_data$Churn <- ifelse(cust_data$Churn == "No", 0, 1)
+```
+
+**Encoding/Creating Dummies:**
+
+I now convert the original dataset into one that represents each
+factor/level within a column into it's own separate column
+(dummies/one-hot encoding). For example, InternetService turns into
+`InternetServiceFiber optic`, and `InternetServiceNo`. One thing to note
+is that the model matrix line drops one of the columns for each factor,
+as to avoid multicolinearity; this was not the case for the gender
+column. Likely due to the inconsistent formatting of the name of the
+levels of that variable, our model.matrix line wouldn't drop a column,
+so I manually dropped one.
+
+```{r}
+encoded_data <- as.data.frame(model.matrix( ~ . - 1, data = cust_data))
+encoded_data$genderMale <- NULL
+
+# Just to ensure the structure
+str(encoded_data)
+```
+
+**Scaling:**
+
+Another important step of pre-processing is scaling the numerical
+variables of the data. Further on in this code, I will build a KNN
+model; for it, the numeric factors have to be comparable to one another.
+For this to happen, they have to be on the same scale, so I create a new
+dataframe that contains scaled data for the KNN model. I utilize min-max
+scaling in this instance, so each numeric variable is now on a scale of
+0-1.
+
+```{r}
+# Formual for scaling
+minmax <- function(x) {
+  (x - min(x)) / (max(x)-min(x))
+}
+
+scaled_data <- as.data.frame(lapply(encoded_data, minmax))
+```
+
+**Balancing/Oversampling:**
+
+Another possible step before splitting the data and building the models
+is balancing the rows in regards to the target variable. On very
+imbalanced datasets, some models tend to favor the majority class,
+resulting in poor performance on the minority class. So first, lets look
+at the current distribution/balance of the Churn column.
+
+```{r}
+table(scaled_data$Churn)
+positive_percentage <- ((sum(scaled_data$Churn))/(sum(nrow(scaled_data))))*100
+```
+
+The dataset has a `r round(positive_percentage, 2)`% proportion of
+positive outcomes, indicating a moderate class imbalance. Considering
+that one of the primary goals is to build a stacked model, which
+requires maintaining the same number of rows across all datasets used
+for individual models, this means that either oversampling must be
+applied to all models, or none.
+
+While balancing the dataset can enhance the performance of some models,
+such as Logistic Regression and K-Nearest Neighbors (KNN), it can
+introduce redundancy and negatively impact the performance of others,
+such as Support Vector Machines (SVM), Decision Trees, and Random
+Forests, particularly when applied to new data. Given these
+considerations, and the fact that the level of imbalance is not severe,
+I have decided not to balance the dataset to preserve its original
+structure and ensure consistency across all models.
+
+------------------------------------------------------------------------
+
+### 3. Split the data
+
+Although some steps of the pre-processing are very important for some of
+the models, for some others they are not necessary or should be either
+avoided. For that, I will split 3 different dataset, the original one
+(but with the customer ID column dropped and no missing values), the
+encoded dataset, and the scaled dataset. The models will use the
+datasets as following:
+
+1.  Logistic Regression: encoded data. It’s important not to use scaled
+    data for Logistic Regression because scaling reduce variance in the
+    dataset, which is crucial for Logistic Regression to perform
+    accurately.
+
+2.  KNN: scaled data. We should scale data for a KNN model because it
+    relies on distance metrics (e.g., Euclidean distance), and unscaled
+    features with larger ranges can disproportionately influence the
+    model's predictions, leading to biased results.
+
+3.  SVM: scaled data. Support Vector Machine models also need the
+    factors to be encoded. Above that you should generally scale your
+    data before using a SVM algorithm because they are sensitive to the
+    scale of features, meaning features with larger values will have a
+    disproportionate influence on the decision boundary, so scaling
+    ensures all features contribute equally to the classification
+    process.
+
+4.  Decision Tree and Random Forest: both models here should input data
+    that is neither encoded or scaled. Both models can handle
+    categorical variables directly if they are coded as factors in R and
+    are insensitive to the scale of numerical variables.
+
+```{r}
+test_rate <- 0.5
+set.seed(666)
+test_rows <- sample(1:nrow(cust_data), test_rate*nrow(cust_data))
+cust_test <- cust_data[test_rows, ]
+cust_train <- cust_data[-test_rows, ]
+
+cust_encoded_test <- encoded_data[test_rows, ]
+cust_encoded_train <- encoded_data[-test_rows, ]
+
+cust_scaled_test <- scaled_data[test_rows, ]
+cust_scaled_train <- scaled_data[-test_rows, ]
+```
+
+------------------------------------------------------------------------
+
+### 4. Build models and Predicions:
+
+**Logistic Regression:**
+
+```{r}
+lr <- glm(Churn ~ ., data = cust_encoded_train, family = binomial)
+stepwise_lr <- step(lr, direction = "both", trace = 0)
+
+prediction_lr <- predict(stepwise_lr, cust_encoded_test, type = "response")
+binary_prediction_lr <- ifelse(prediction_lr < .30, 0, 1) # Explain why 0.3 (balance between accuracy/kappa and sensitivity)
+
+confusionMatrix(as.factor(binary_prediction_lr),
+                as.factor(cust_encoded_test$Churn),
+                positive = "1")
+```
+
+**KNN:**
+
+```{r}
+evaluate_k <- function(train_data, test_data, train_labels, test_labels, k_values, positive_label) {
+  results <- data.frame(
+    k = integer(),
+    Accuracy = numeric(),
+    Kappa = numeric(),
+    Sensitivity = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (k in k_values) {
+    prediction_knn <- knn(train = train_data, 
+                          test = test_data, 
+                          cl = train_labels, 
+                          k = k)
+    
+    cm <- confusionMatrix(as.factor(prediction_knn), as.factor(test_labels), positive = positive_label)
+    
+    results <- rbind(results, data.frame(
+      k = k,
+      Accuracy = cm$overall["Accuracy"],
+      Kappa = cm$overall["Kappa"],
+      Sensitivity = cm$byClass["Sensitivity"]
+    ))
+  }
+  
+  return(results)
+}
+
+k_values <- seq(1, 30, by = 1)
+
+churn_col <- which(colnames(cust_scaled_train) == "Churn")
+find_k_train_data <- cust_scaled_train[,-churn_col]
+find_k_test_data <- cust_scaled_test[,-churn_col]
+find_k_train_labels <- cust_scaled_train[,churn_col]
+find_k_test_labels <- cust_scaled_test[,churn_col]
+
+
+results <- evaluate_k(
+  train_data = find_k_train_data,
+  test_data = find_k_test_data,
+  train_labels = find_k_train_labels,
+  test_labels = find_k_test_labels,
+  k_values = k_values,
+  positive_label = "1"
+)
+
+print(results)
+
+ggplot(results, aes(x = k)) +
+  geom_line(aes(y = Accuracy), color = "#FF5733") +
+  geom_line(aes(y = Kappa), color = "#4CB3FE") +
+  geom_line(aes(y = Sensitivity), color = "#6CBB3C") +
+  labs(
+    title = "KNN Performance Metrics",
+    x = "k",
+    y = "Metric Value"
+  ) +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, 1))
+
+```
+
+```{r}
+churn_col <- which(colnames(cust_scaled_train) == "Churn")
+prediction_knn <- knn(train = cust_scaled_train[,-churn_col], 
+                      test = cust_scaled_test[,-churn_col], 
+                      cl = cust_scaled_train[,churn_col], 
+                      k = 7)
+summary(prediction_knn)
+
+confusionMatrix(as.factor(prediction_knn), as.factor(cust_scaled_test$Churn), positive = "1")
+```
+
+**SVM:**
+
+```{r}
+try_kernels <- function(kernel_name) {
+  model <- ksvm(as.factor(Churn) ~ ., data = cust_scaled_train, kernel = kernel_name)
+  predictions <- predict(model, cust_scaled_test)
+  cm <- confusionMatrix(as.factor(predictions), as.factor(cust_scaled_test$Churn), positive = "1")
+  
+  accuracy <- cm$overall["Accuracy"]
+  kappa <- cm$overall["Kappa"]
+  sensitivity <- cm$byClass["Sensitivity"]
+  
+  # Return all metrics
+  return(c(accuracy = accuracy, kappa = kappa, sensitivity = sensitivity))
+}
+
+
+kernels <- c("vanilladot", "polydot", "rbfdot", "tanhdot", "anovadot", "laplacedot", "besseldot", "splinedot")
+data.frame(sapply(kernels, try_kernels))
+
+svm <- ksvm(as.factor(Churn) ~ ., data = cust_scaled_train,
+                          kernel = "polydot")
+svm_prediction <- predict(svm, cust_scaled_test)
+confusionMatrix(as.factor(svm_prediction),
+                as.factor(cust_scaled_test$Churn),
+                positive="1")
+
+```
+
+**Decision Tree:**
+
+```{r}
+dt <- C5.0(as.factor(Churn) ~ ., data = cust_train)
+plot(dt)
+
+dt_prediction <- predict(dt, newdata = cust_test)
+
+confusionMatrix(as.factor(dt_prediction),
+                as.factor(cust_test$Churn),
+                positive="1")
+
+cost_matrix <- matrix(c(0, 2,   
+                        1, 0),  
+                      nrow = 2,
+                      byrow = TRUE)
+rownames(cost_matrix) <- colnames(cost_matrix) <- c("0", "1")
+
+
+dt2 <- C5.0(as.factor(Churn) ~ ., data = cust_train, costs = cost_matrix)
+plot(dt2)
+
+dt2_prediction <- predict(dt, newdata = cust_test)
+
+confusionMatrix(as.factor(dt2_prediction),
+                as.factor(cust_test$Churn),
+                positive="1")
+```
+
+**Random Forest:**
+
+```{r}
+set.seed(666)
+rf <- randomForest(as.factor(Churn) ~ ., data = cust_train)
+plot(rf)
+randomForest::varImpPlot(rf)
+
+rf_prediction <- predict(rf, newdata = cust_test)
+
+confusionMatrix(as.factor(rf_prediction),
+                as.factor(cust_test$Churn),
+                positive="1")
+```
+
+------------------------------------------------------------------------
+
+### Gathering all the predictions:
+
+```{r}
+# Renaming the original target variable from the test set:
+response <- cust_test$Churn
+
+all_predictions <- data.frame(
+                              binary_prediction_lr, 
+                              prediction_knn, 
+                              svm_prediction, 
+                              dt2_prediction, 
+                              rf_prediction, 
+                              response)
+
+str(all_predictions)
+all_predictions$binary_prediction_lr <- as.factor(all_predictions$binary_prediction_lr)
+all_predictions$response <- as.factor(all_predictions$response)
+```
+
+```{r}
+test_rate <- 0.3
+set.seed(666)
+
+test_prediction_rows <- sample(1:nrow(all_predictions), test_rate*nrow(all_predictions))
+train_predictions <- all_predictions[test_prediction_rows, ]
+test_predictions <- all_predictions[-test_prediction_rows, ]
+```
+
+```{r}
+model <- C5.0(as.factor(response) ~ ., data = train_predictions)
+plot(model)
+
+predictions <- predict(model, newdata = test_predictions)
+
+confusionMatrix <- table(predictions, test_predictions$response)
+print(confusionMatrix)
+
+cost_matrix_prediction <- matrix(c(0, 2,   
+                                  1, 0),  
+                                  nrow = 2,
+                                  byrow = TRUE)
+rownames(cost_matrix) <- colnames(cost_matrix) <- c("0", "1")
+
+model2 <- C5.0(as.factor(response) ~ ., data = train_predictions, costs = cost_matrix_prediction)
+plot(model2)
+predictions2 <- predict(model2, newdata = test_predictions)
+
+confusionMatrix(as.factor(predictions2),
+                as.factor(test_predictions$response),
+                positive="1")
+```

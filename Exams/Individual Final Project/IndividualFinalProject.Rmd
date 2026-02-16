@@ -1,0 +1,711 @@
+---
+title: "IndividualFinalProject_BeatrizWahle"
+author: "Beatriz Wahle"
+date: "2024-11-21"
+output: 
+  html_document:
+    theme: yeti
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+# All Libraries used in this file:
+library(class)  # For KNN
+library(caret)  # For Confusion Matrix
+library(ggplot2) # For plotting graphics
+library(kernlab) # For SVM
+library(C50)
+```
+
+### Introduction
+
+This Individual Final Project will consist of two main parts, a stacked
+model predictive modelling approach and an implementation of the
+prediction model. Before getting into an explanation to each, lets have
+an overview of the dataset.
+
+**Dataset Overview: Telco Customer Churn**
+
+The dataset analyzed is the Telco Customer Churn dataset, which contains
+information on 7,043 customers of a telecommunications company. The
+primary objective of this dataset is to predict customer churn, i.e.,
+whether a customer will discontinue the service (Churn) based on various
+customer demographics, account information, and service usage metrics.
+The target variable Churn is a categorical variable with two levels: Yes
+(indicating churn) and No (indicating retention).
+
+Regarding the structure of the data: the dataset includes 21 variables,
+which are a mix of categorical and numerical data types.
+
+**Part 1: Stacked Model Predictive Modelling Approach**
+
+In this first part of the project we will work with building different
+prediction models, for instance a Logistic Regression, a Support Vector
+Machine, and a KNN. Although it was already explained what Churn is, it
+is also important to grasp why it's prediction matter.
+
+[Why Predict Churn?]{.underline}
+
+-   Financial Impact: Churn results in revenue loss for the company, and
+    predictive insights can help in designing targeted retention
+    campaigns, reducing costs associated with customer acquisition.
+
+-   Competitive Advantage: Minimizing churn ensures better customer
+    retention compared to competitors in the telecommunications market.
+
+[Potential Users of the Predictive Model:]{.underline}
+
+1.  Marketing Teams: To design retention strategies such as targeted
+    offers or loyalty programs for customers at high risk of churning.
+2.  Customer Support Departments: To proactively engage with at-risk
+    customers and resolve their issues before they decide to leave.
+3.  Product Managers: To identify patterns in customer preferences and
+    dissatisfaction, enabling them to improve products and services.
+4.  Senior Management/Executives: To evaluate the effectiveness of churn
+    mitigation strategies and allocate resources more effectively.
+5.  Data Scientists/Analysts: To continuously improve and refine the
+    predictive models, ensuring sustained performance as customer
+    behaviors evolve.
+
+------------------------------------------------------------------------
+
+### 1. Get the data
+
+The first step before getting into the part 1 of building models is
+getting the dataset. This is what I an going to do in the following
+snippet. Apart from reading the csv file, the function
+`stringsAsFactors = T` will transform the string columns into factors,
+making it easier for processes on further steps.
+
+```{r}
+cust_data <- read.csv("TelcoChurn.csv", stringsAsFactors = T)
+```
+
+With the data loaded, lets look at its summary and structure before any
+pre-processing measures.
+
+```{r}
+summary(cust_data)
+str(cust_data)
+```
+
+------------------------------------------------------------------------
+
+### 2. Clean the data
+
+Once we have the data, it is always fundamental to check for missing
+values. The code below will count the total of missing values (if any).
+
+```{r}
+missing_values <- sum(is.na(cust_data))
+```
+
+The dataset has `r missing_values` missing values and we need to handle
+those. Let's look at which columns have missing values:
+
+```{r}
+data.frame(colSums(is.na(cust_data)))
+```
+
+As we can see, the only column with missing values is the
+`TotalCharges`. Since it is a numeric column, we could input the mean or
+the median on those missing values, however, that can introduce a small
+bias. As there are only 11 rows out of the 7043 observations, that
+shouldn't justify the exclusion of the entire column. I will choose to
+simply delete those rows.
+
+```{r}
+cust_data <- na.omit(cust_data)
+
+# Check there are no missing values
+sum(is.na(cust_data))
+```
+
+Now that we do not have any missing values, we can move on to the next
+steps of pre-processing.
+
+**Deleting meaningless columns:**
+
+The column `customerID` should not aggregate value to the prediction
+models and therefore will be deleted.
+
+```{r}
+cust_data$customerID <- NULL
+```
+
+If we look back to the data structure, we can see that the target column
+`Churn` is a factor with two levels. These are coded as 1 and 2 (as
+counting in R starts on 1, differently than Python or other languages
+that counting starts in 0). Simply for a personal choice of formality
+(to maintain the positive class as 1), I will transform the factors into
+a numeric column of 0, 1.
+
+```{r}
+str(cust_data$Churn)
+cust_data$Churn <- ifelse(cust_data$Churn == "No", 0, 1)
+```
+
+**Encoding/Creating Dummies:**
+
+I now convert the original dataset into one that represents each
+factor/level within a column into it's own separate column
+(dummies/one-hot encoding). For example, `InternetService` turns into
+`InternetServiceFiber optic`, and `InternetServiceNo`. One thing to note
+is that the model matrix line drops one of the columns for each factor,
+as to avoid multicolinearity; this was not the case for the gender
+column. Likely due to the inconsistent formatting of the name of the
+levels of that variable, our model.matrix line wouldn't drop a column,
+so I manually dropped one.
+
+```{r}
+encoded_data <- as.data.frame(model.matrix( ~ . - 1, data = cust_data))
+encoded_data$genderMale <- NULL
+
+# Just to ensure the structure
+str(encoded_data)
+```
+
+**Scaling:**
+
+Another important step of pre-processing is scaling the numerical
+variables of the data. Further on in this code, I will build a KNN
+model; for it, the numeric factors have to be comparable to one another.
+For this to happen, they have to be on the same scale, so I create a new
+dataframe that contains scaled data for the KNN model. I utilize min-max
+scaling in this instance, so each numeric variable is now on a scale of
+0-1.
+
+```{r}
+# Formual for scaling
+minmax <- function(x) {
+  (x - min(x)) / (max(x)-min(x))
+}
+
+scaled_data <- as.data.frame(lapply(encoded_data, minmax))
+```
+
+**Balancing/Oversampling:**
+
+Another possible step before splitting the data and building the models
+is balancing the rows in regards to the target variable. On very
+imbalanced datasets, some models tend to favor the majority class,
+resulting in poor performance on the minority class. So first, lets look
+at the current distribution/balance of the Churn column.
+
+```{r}
+table(scaled_data$Churn)
+positive_percentage <- ((sum(scaled_data$Churn))/(sum(nrow(scaled_data))))*100
+```
+
+The dataset has a `r round(positive_percentage, 2)`% proportion of
+positive outcomes, indicating a moderate class imbalance. Considering
+that one of the primary goals is to build a stacked model, which
+requires maintaining the same number of rows across all datasets used
+for individual models, this means that either oversampling must be
+applied to all models, or none.
+
+While balancing the dataset can enhance the performance of some models,
+such as Logistic Regression and K-Nearest Neighbors (KNN), it can
+introduce redundancy and negatively impact the performance of others,
+such as Support Vector Machines (SVM), Decision Trees, and Random
+Forests, particularly when applied to new data. Given these
+considerations, and the fact that the level of imbalance is not severe,
+I have decided not to balance the dataset to preserve its original
+structure and ensure consistency across all models.
+
+------------------------------------------------------------------------
+
+### 3. Split the data
+
+The final step before getting into the part of building the models (Part
+1) is splitting the dataset into train and test.
+
+Although some steps of the pre-processing are very important for some of
+the models, for some others they are not necessary or should be either
+avoided. For that, I will split 3 different dataset, the original one
+(but with the customer ID column dropped and no missing values), the
+encoded dataset, and the scaled dataset. The models will use the
+datasets as following:
+
+1.  Logistic Regression: encoded data. It’s important not to use scaled
+    data for Logistic Regression because scaling reduce variance in the
+    dataset, which is crucial for Logistic Regression to perform
+    accurately.
+
+2.  KNN: scaled data. We should scale data for a KNN model because it
+    relies on distance metrics (e.g., Euclidean distance), and unscaled
+    features with larger ranges can disproportionately influence the
+    model's predictions, leading to biased results.
+
+3.  SVM: scaled data. Support Vector Machine models also need the
+    factors to be encoded. Above that you should generally scale your
+    data before using a SVM algorithm because they are sensitive to the
+    scale of features, meaning features with larger values will have a
+    disproportionate influence on the decision boundary, so scaling
+    ensures all features contribute equally to the classification
+    process.
+
+```{r}
+test_rate <- 0.5
+set.seed(666)
+test_rows <- sample(1:nrow(cust_data), test_rate*nrow(cust_data))
+
+cust_encoded_test <- encoded_data[test_rows, ]
+cust_encoded_train <- encoded_data[-test_rows, ]
+
+cust_scaled_test <- scaled_data[test_rows, ]
+cust_scaled_train <- scaled_data[-test_rows, ]
+```
+
+------------------------------------------------------------------------
+
+## Part 1: Stacked Model Predictive Modelling Approach
+
+**Logistic Regression:**
+
+This model identifies relationships between various inputs and predicts
+the probability of an outcome. Furthermore, rather than pursuing a
+computationally-intensive process of building a giant model, and then a
+step one that simplifies it, this approach builds a simple model and
+then it performs a stepwise selection on the simple model. Stepwise
+selection is a method of refining a model by adding or removing
+predictors based on specific criteria.
+
+As I want for the prediction to be binary, I created an `ifelse` in
+which every prediction below 0.3 is considered to be failed (0), and
+from 0.3 up successful (1). The threshold was decided to be 0.3 because
+after some manual iterations (e.g. 0.2, 0.25, 0.4, 0.5), this was the
+one to better balance the metrics of accuracy, sensitivity and
+specificity.
+
+```{r}
+lr <- glm(Churn ~ ., data = cust_encoded_train, family = binomial)
+stepwise_lr <- step(lr, direction = "both", trace = 0)
+
+prediction_lr <- predict(stepwise_lr, cust_encoded_test, type = "response")
+binary_prediction_lr <- ifelse(prediction_lr < 0.3, 0, 1) 
+
+confusionMatrix(as.factor(binary_prediction_lr),
+                as.factor(cust_encoded_test$Churn),
+                positive = "1")
+```
+
+The logistic regression model achieves an accuracy of 75.82%, which is
+good, with a moderate Kappa value of 0.4497, indicating fair agreement
+beyond chance. Sensitivity, at 75.30%, shows the model effectively
+identifies most churners but still misses about a quarter, which could
+impact retention strategies.
+
+**Support Vector Machine:**
+
+A Support Vector Machine (SVM) predicts by finding the optimal
+hyper-plane or boundary that maximally separates data points of
+different classes in a high-dimensional space, using support vectors
+(critical data points) to define this margin.
+
+Here, we were requested to test out 3 different kernels, and find out
+which performs the best for our dataset. There are two ways to do so:
+(1) manually testing out all of the kernels or (2) having a function
+that loops over the kernels and gather the most important values to
+compare them (Accuracy, Kappa and Sensitivity).
+
+Although both codes are demonstrated below, I chose to use the function
+simply because the visualization of all the metrics of the 3 kernels
+together makes it easier for comparison.
+
+```{r}
+set.seed(666)
+try_kernels <- function(kernel_name) {
+  model <- ksvm(as.factor(Churn) ~ ., data = cust_scaled_train, kernel = kernel_name)
+  predictions <- predict(model, cust_scaled_test)
+  cm <- confusionMatrix(as.factor(predictions), as.factor(cust_scaled_test$Churn), positive = "1")
+  
+  accuracy <- cm$overall["Accuracy"]
+  kappa <- cm$overall["Kappa"]
+  sensitivity <- cm$byClass["Sensitivity"]
+  
+  # Return all metrics
+  return(c(accuracy = accuracy, kappa = kappa, sensitivity = sensitivity))
+}
+
+
+kernels <- c("vanilladot", "polydot", "rbfdot")
+data.frame(sapply(kernels, try_kernels))
+
+
+
+svm <- ksvm(as.factor(Churn) ~ ., data = cust_scaled_train,
+                          kernel = "polydot")
+svm_prediction <- predict(svm, cust_scaled_test)
+confusionMatrix(as.factor(svm_prediction),
+                as.factor(cust_scaled_test$Churn),
+                positive="1")
+
+#svm2 <- ksvm(as.factor(Churn) ~ ., data = cust_scaled_train,
+#                          kernel = "vanilladot")
+#svm_prediction2 <- predict(svm2, cust_scaled_test)
+#confusionMatrix(as.factor(svm_prediction2),
+#                as.factor(cust_scaled_test$Churn),
+#                positive="1")
+#
+#svm3 <- ksvm(as.factor(Churn) ~ ., data = cust_scaled_train,
+#                          kernel = "rbfdot")
+#svm_prediction3 <- predict(svm3, cust_scaled_test)
+#confusionMatrix(as.factor(svm_prediction3),
+#                as.factor(cust_scaled_test$Churn),
+#                positive="1")
+```
+
+Based on the information provided we can conclude that:
+
+-   Accuracy: All three kernels (vanilla, polynomial, and RBF) achieve
+    nearly identical accuracy (\~79.8%), meaning they perform similarly
+    in predicting both churners and non-churners.
+
+-   Kappa: The vanilla and polynomial kernels have slightly higher Kappa
+    values (0.4551) compared to the RBF kernel (0.4333). This indicates
+    that the vanilla and polynomial kernels better align predictions
+    with the actual outcomes beyond random chance.
+
+-   Sensitivity: The vanilla and polynomial kernels show the highest
+    sensitivity (0.5541), meaning they are better at identifying
+    churners than the RBF kernel.
+
+Conclusion: The **vanilla** kernel or **polynomial** kernel best fits
+the data due to their higher Kappa and sensitivity, making them more
+effective for churn prediction.
+
+Regarding the performance of the best model chosen, the SVM model using
+the "polydot" kernel achieves an accuracy of 79.81%, which is a
+noticeable improvement over the Logistic Regression. The Kappa statistic
+(0.4551) reflects moderate agreement beyond random chance, comparable to
+other models evaluated. However, the sensitivity (55.41%), still leaves
+room for improvement in identifying churners effectively. The high
+specificity (88.39%) shows the model is better at predicting
+non-churners, but a more balanced sensitivity would enhance its
+effectiveness for churn prediction tasks.
+
+**K-Nearest Neighbors:**
+
+Next, I developed a K-Nearest Neighbors model, another predictive model.
+KNN creates predictions by examining a data point’s k nearest neighbors
+(k being a number we decide upon). A data point’s nearest neighbors
+would be ones that are most similar to it based on the predictive
+variables.
+
+In order to choose the k in which the model performs best, I developed a
+function that will run through ks from 1 to 20 to give me each Accuracy,
+Kappa, and Sensitivity. Then, I will plot it so I can look for the
+optimal K. (The code here is hidden due to its length)
+
+```{r, echo=FALSE}
+evaluate_k <- function(train_data, test_data, train_labels, test_labels, k_values, positive_label) {
+  results <- data.frame(
+    k = integer(),
+    Accuracy = numeric(),
+    Kappa = numeric(),
+    Sensitivity = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (k in k_values) {
+    prediction_knn <- knn(train = train_data, 
+                          test = test_data, 
+                          cl = train_labels, 
+                          k = k)
+    
+    cm <- confusionMatrix(as.factor(prediction_knn), as.factor(test_labels), positive = positive_label)
+    
+    results <- rbind(results, data.frame(
+      k = k,
+      Accuracy = cm$overall["Accuracy"],
+      Kappa = cm$overall["Kappa"],
+      Sensitivity = cm$byClass["Sensitivity"]
+    ))
+  }
+  
+  return(results)
+}
+
+k_values <- seq(1, 20, by = 1)
+
+churn_col <- which(colnames(cust_scaled_train) == "Churn")
+find_k_train_data <- cust_scaled_train[,-churn_col]
+find_k_test_data <- cust_scaled_test[,-churn_col]
+find_k_train_labels <- cust_scaled_train[,churn_col]
+find_k_test_labels <- cust_scaled_test[,churn_col]
+
+
+results <- evaluate_k(
+  train_data = find_k_train_data,
+  test_data = find_k_test_data,
+  train_labels = find_k_train_labels,
+  test_labels = find_k_test_labels,
+  k_values = k_values,
+  positive_label = "1"
+)
+
+print(results)
+
+ggplot(results, aes(x = k)) +
+  geom_line(aes(y = Accuracy), color = "#FF5733") +
+  geom_line(aes(y = Kappa), color = "#4CB3FE") +
+  geom_line(aes(y = Sensitivity), color = "#6CBB3C") +
+  labs(
+    title = "KNN Performance Metrics",
+    x = "k",
+    y = "Metric Value"
+  ) +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, 1))
+
+```
+
+Based both on the table and the plot (although might be harder to
+pin-point at it), the k that maximizes the 3 metrics is **k = 19**.
+
+Selecting **k = 19** ensures robust performance across all metrics while
+avoiding overfitting at smaller k values or underfitting at larger ones.
+
+```{r}
+churn_col <- which(colnames(cust_scaled_train) == "Churn")
+prediction_knn <- knn(train = cust_scaled_train[,-churn_col], 
+                      test = cust_scaled_test[,-churn_col], 
+                      cl = cust_scaled_train[,churn_col], 
+                      k = 19)
+summary(prediction_knn)
+
+confusionMatrix(as.factor(prediction_knn), as.factor(cust_scaled_test$Churn), positive = "1")
+```
+
+The KNN model achieves an accuracy of 77.5%, which is better than the
+Logistic Regression but worse than the SVM, indicating reasonable
+predictive performance. The Kappa statistic (0.4113) reflects the worse
+agreement beyond chance, although not being incredibly bad. However, the
+sensitivity (55.63%) is relatively low if compared to the Logistic
+Regression, meaning the model struggles to identify churners
+effectively, which could limit its usefulness in retention strategies.
+While the specificity (85.20%) indicates strong performance in
+predicting non-churners, improving sensitivity is crucial to better
+capture at-risk customers.
+
+**Second Level Decision Tree:**
+
+Now with all three models built, I will create a second-level (stack)
+decision tree to combine their predictions, leveraging the strengths of
+each model to improve overall accuracy by using their outputs as
+features to make the final classification decision.
+
+The first thing to do is to combine all predictions into a new
+dataframe, as done with the code below:
+
+```{r}
+# Renaming the original target variable from the test set:
+response <- cust_encoded_test$Churn
+
+all_predictions <- data.frame(
+                              binary_prediction_lr = as.numeric(binary_prediction_lr), 
+                              prediction_knn = as.numeric(prediction_knn), 
+                              svm_prediction = as.numeric(svm_prediction),
+                              response = as.numeric(response))
+
+str(all_predictions)
+
+# Just a formality to make sure all positives are = 1
+all_predictions$prediction_knn <- ifelse(all_predictions$prediction_knn == 1, 0, 1)
+all_predictions$svm_prediction <- ifelse(all_predictions$svm_prediction == 1, 0, 1)
+```
+
+With the dataset create, and correctly formatted, we can split it to
+apply the Decision Tree. That's what the code below does:
+
+```{r}
+test_rate <- 0.3
+set.seed(1234567)
+
+test_prediction_rows <- sample(1:nrow(all_predictions), test_rate*nrow(all_predictions))
+train_predictions <- all_predictions[-test_prediction_rows, ]
+test_predictions <- all_predictions[test_prediction_rows, ]
+```
+
+Once with the splits we apply a simple decision tree.
+
+```{r}
+model <- C5.0(as.factor(response) ~ ., data = train_predictions)
+plot(model)
+
+predictions <- predict(model, newdata = test_predictions)
+
+confusionMatrix(as.factor(predictions),
+                as.factor(test_predictions$response),
+                positive="1")
+```
+
+From the metrics of this simple decision tree model we can see that
+although the accuracy is really high, the sensitivity is considerably
+low if compared to some of the individual models. To try to solve that
+and better balance the accuracy/sensitivity trade-off, I will apply a
+cost matrix that penalizes the false negatives, which will increase the
+false positives, but likely, the true positives as well.
+
+```{r}
+cost_matrix_prediction <- matrix(c(0, 3,   
+                                  1, 0),  
+                                  nrow = 2,
+                                  byrow = TRUE)
+rownames(cost_matrix_prediction) <- colnames(cost_matrix_prediction) <- c(0, 1)
+
+model2 <- C5.0(as.factor(response) ~ ., data = train_predictions, costs = cost_matrix_prediction)
+plot(model2)
+predictions2 <- predict(model2, newdata = test_predictions)
+
+confusionMatrix(as.factor(predictions2),
+                as.factor(test_predictions$response),
+                positive="1")
+```
+
+This final stacked model focuses on maximizing sensitivity, achieving
+the highest sensitivity (0.7665 with a 3:1 cost matrix) but sacrifices
+some of the original accuracy (0.7609) and Kappa (0.4477), indicating
+less balanced predictions. In contrast, the SVM achieves the highest
+accuracy (0.7981) and a moderate Kappa (0.4551) but has poor sensitivity
+(0.5541), struggling to identify positive churn cases. Logistic
+regression strikes a good balance, with accuracy (0.7582), sensitivity
+(0.7530), and Kappa (0.4497), making it more consistent across metrics.
+KNN falls behind with slightly lower accuracy (0.775) and sensitivity
+(0.5563).
+
+In general, the stack model makes a good job at being consistent across
+the metrics.
+
+------------------------------------------------------------------------
+
+## Part 2: Implementing the Prediction Model
+
+Whenever trying to implement a model, the first step is to simply set
+the key definitions:
+
+-   Cost of discount per customer: \$100
+
+-   Retention rate due to discount: 30% of customers predicted to churn
+    who were actually going to churn will stay.
+
+-   Savings per retained customer: \$500 (avoided customer acquisition
+    cost).
+
+Let's make those numbers variables, so I can make some basic
+calculations with them:
+
+```{r}
+cost_discount_per_customer <- 100
+retention_rate <- 0.3
+savings_per_retained_customer <- 500
+
+true_positives <- 229
+false_positives <-  170
+
+cost_of_discount <- (true_positives + false_positives) * cost_discount_per_customer
+retention_savings <- (retention_rate * true_positives) * savings_per_retained_customer
+
+net_financial_impact <- retention_savings - cost_of_discount
+
+```
+
+Currently, the overall cost of discount to be offered to all clients
+predicted to leave is \$`r cost_of_discount`. That cost implies a
+success of 30% of the ones that were going to leave (true positives)
+were convinced, and that generates an overall saving of
+\$`r retention_savings`. Based on these two information, we can conclude
+that the net financial impact is of \$`r net_financial_impact`.
+
+As seen, if the Customer Retention Incentive Program is made with the
+current prediction model, the company will loose money. However, in
+order to solve this problem, there is an important assumption to make.
+We will be considering that the \$/500 savings of new acquisition will
+only apply true positives that we are able to convince, but they will
+not translate to the idea that each customer lost implies a cost of
+\$/500.
+
+What that in mind, I will change the weights on the cost matrix to
+maximize the financial impact. As for now, the cost matrix is giving a
+higher penalty for the false negatives (vs. the false positives),
+nonetheless, with the cost of discount that the false positives bring to
+the program, I will try to invert the weights, in order to penalize more
+the false positives.
+
+The code below changes the cost matrix and generates a third stacked
+model:
+
+```{r}
+cost_matrix_prediction2 <- matrix(c(0, 1,   
+                                  1, 0),  
+                                  nrow = 2,
+                                  byrow = TRUE)
+rownames(cost_matrix_prediction2) <- colnames(cost_matrix_prediction2) <- c("0", "1")
+
+model3 <- C5.0(as.factor(response) ~ ., data = train_predictions, costs = cost_matrix_prediction2)
+plot(model3)
+predictions3 <- predict(model3, newdata = test_predictions)
+
+confusionMatrix(as.factor(predictions3),
+                as.factor(test_predictions$response),
+                positive="1")
+
+new_true_positives <- 160
+new_false_positives <- 64 
+
+cost_of_discount2 <- (new_true_positives + new_false_positives) * cost_discount_per_customer
+retention_savings2 <- (retention_rate * new_true_positives) * savings_per_retained_customer
+
+net_financial_impact2 <- retention_savings2 - cost_of_discount2
+```
+
+The code below changes the cost matrix once more and generates a fourth
+stacked model:
+
+```{r}
+cost_matrix_prediction3 <- matrix(c(0, 1,   
+                                  1.5, 0),  
+                                  nrow = 2,
+                                  byrow = TRUE)
+rownames(cost_matrix_prediction3) <- colnames(cost_matrix_prediction3) <- c("0", "1")
+
+model4 <- C5.0(as.factor(response) ~ ., data = train_predictions, costs = cost_matrix_prediction3)
+plot(model4)
+predictions4 <- predict(model4, newdata = test_predictions)
+
+confusionMatrix(as.factor(predictions4),
+                as.factor(test_predictions$response),
+                positive="1")
+
+new2_true_positives <- 139
+new2_false_positives <- 49 
+
+cost_of_discount3 <- (new2_true_positives + new2_false_positives) * cost_discount_per_customer
+retention_savings3 <- (retention_rate * new2_true_positives) * savings_per_retained_customer
+
+net_financial_impact3 <- retention_savings3 - cost_of_discount3
+```
+
+------------------------------------------------------------------------
+
+### Conclusion:
+
+Although this final stacked model just generated deliver a profitable
+scenario for the Customer Retention Incentive Program, and might be the
+best one to be applied to this specific case, it does not mean it is the
+better performing model for an overall prediction.
+
+The conclusion here is that the best model you can generate will depend
+of your objectives and goals for it. The model to make the more accurate
+future predictions is likely the last one from part 1, but for this
+business case, the model4 might be the best.

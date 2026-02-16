@@ -1,0 +1,160 @@
+---
+title: "Homework 2"
+author: "Beatriz Wahle"
+date: "2024-09-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Dear AABC Team,**
+
+I have been notified of you current worries regarding the construction of a bridge on the Huron River in Ann Arbor. I understand that the bridge will need a strength of 40 for anticipated traffic load and there are different options to try and reach that goal.
+
+
+In order to have a secure bridge, I will build a prediction model to better assess the potential alternatives. I will guide you through a six steps process that involve the prediction, and finally, justify the best combination of factor to build a strong bridge. 
+
+
+
+#### 1. Get the data
+
+Firstly, I need to upload the dataset I will be working with in order to train and test the prediction model. Furthermore, I will be printing its summary and structure, to have an overall understanding of the columns we will be working with. 
+```{r}
+library(caret)
+data <- read.csv("concrete.csv")
+summary(data)
+str(data)
+```
+
+
+
+
+#### 2. Clean the data
+
+In this next step, we need to prepare the data for the future analysis. This involves both checking for missing values and evaluating if the columns offer the data in a format that makes sense for the prediction.
+
+From the summary and the structure of the data there are already a couple important things to note. Firstly, there are apparently no missing values in the dataset (as we can see that all the statistical values appear to be normal for all variables). Secondly, we can see that most columns are numeric, with exception to `age` that is in integer form. None of the variables should be converted into factors as they are measured in units and have continuous numerical relationships with concrete strength. Treating them as continuous makes sense because their values can vary in a meaningful way, and the model will benefit from capturing that variation.
+
+If we want a second assurance that there are no missing values, here is a function to count the missing values per column:
+```{r}
+colSums(is.na(data))
+```
+As we can see there are no missing values.
+
+
+
+
+#### 3. Split the data
+
+With no need to deal with missing values or column transformations, we are ready to move on to step 3. Splitting data before building a prediction model is essential to evaluate the model's performance on unseen data. The training set is used to train the model, while the test set is used to assess how well the model generalizes to new data. This ensures that the model isn't overfitting (performing well only on the training data but poorly on new data) and provides an unbiased evaluation of its predictive performance.
+
+```{r}
+train_rate <- 0.8 #this means that 80% of the dataset will be on the training set
+set.seed(0) # this ensures that the same random split to occur each time, which makes model results consistent and comparable across runs 
+train_rows <- sample(1:nrow(data), train_rate * nrow(data)) #separate the rows for training
+
+data_train <- data[train_rows, ] # get the set from those rows
+data_test <- data[-train_rows, ] # set except those rows
+```
+
+
+#### 4. Building the model
+The idea here is to build the most complete model we can, interaction-heavy model with polynomial terms. After building the complex model, the step function performs backward elimination. This method iteratively removes the least significant variables based on the AIC to reduce the model's complexity while retaining important predictors. It’s a common method to avoid overfitting while keeping the model's predictive power.
+
+```{r}
+GiantModel <- lm(strength ~ . + .*.  + I(cement^2) + I(slag^2) + I(ash^2) + I(water^2) + I(superplastic^2) + I(coarseagg^2) + I(fineagg^2) + I(age^2), data = data_train)
+summary(GiantModel)
+
+stepmodel1 <- step(GiantModel, direction = 'backward', trace = T)
+summary(stepmodel1)
+```
+
+
+
+#### 5. Prediction
+
+Once the models are built, the trained model is applied to new, unseen data to estimate the target variable. In this case, after training the `GiantModel` and `stepmodel1` models on a set of known data, the prediction step uses the relationships learned during training to predict concrete strength for the test dataset. This step is critical because it assesses how well the model generalizes to new data and provides a measure of its real-world performance. By comparing the predicted values from the models to the actual outcomes in the test set, you can evaluate which model is more accurate and reliable for future use.
+
+```{r}
+giantmodel_prediction <- predict(GiantModel, data_test)
+summary(giantmodel_prediction)
+
+stepmodel1_prediction <- predict(stepmodel1, data_test)
+summary(stepmodel1_prediction)
+```
+
+
+
+#### 6. Evalute Model
+
+This step is used to evaluate the performance of the GiantModel and stepmodel1 by comparing their predicted concrete strength values to the actual values from the test set. It calculates key metrics like R², which measures how well the model explains the variance in the data, RMSE (Root Mean Squared Error), which indicates the average error in the model's predictions, and MAE (Mean Absolute Error), which shows the average magnitude of errors. These metrics help determine how accurately each model predicts concrete strength and allows you to compare the two models to identify which performs better for real-world application. 
+
+```{r}
+postResample(giantmodel_prediction, data_test$strength)
+postResample(stepmodel1_prediction, data_test$strength)
+```
+The evaluation results show that the GiantModel performs slightly worse than the stepmodel1. The stepmodel1 has a lower RMSE (7.57 vs. 7.60) and a marginally higher R² (0.815 vs. 0.813), indicating it explains slightly more variance in concrete strength and has smaller prediction errors. The MAE is also lower for the stepmodel1 (6.055 vs. 6.056), meaning it has slightly more accurate predictions overall. Although the difference is minor, the stepmodel1 provides better predictive performance.
+
+
+#### Step 7: Predict the case
+With the model build, trained, and tested on a different dataset, it is time to use them of the initial intended prediction.
+```{r}
+#the bridge needs a strenght of 40
+option1 <- data.frame(cement=142, age = 28, ash = 130, slag = 167, water = 175, superplastic = 11, coarseagg = 825, fineagg = 825)
+option2 <- data.frame(cement=200, age = 14, ash = 130, slag = 167, water = 175, superplastic = 11, coarseagg = 825, fineagg = 825)
+
+predict(GiantModel, option1)
+predict(GiantModel, option2)
+
+predict(stepmodel1, option1)
+predict(stepmodel1, option2)
+```
+Based on the predictions of both models, either options won't deliver the necessary anticipated traffic load strength of 40. It is also important to notice that both models predict that the second alternative proposed (200 units of cement and 14 days of aging).
+
+
+Alternative: as you mentioned you have a lot of ash, and simply chose to use 130. My advice, would be to increase its quantity as it will have a direct impact on the strength of the bridge
+```{r}
+option3 <- data.frame(cement=200, age = 14, ash = 200, slag = 167, water = 175, superplastic = 11, coarseagg = 825, fineagg = 825)
+predict(GiantModel, option3)
+predict(stepmodel1, option3)
+```
+As seen from the prediction, increasing the ash to 200 will make the bridge have the anticipated traffic load strengh needed.
+
+
+### Extra
+
+**I know that if I used the teachers seed the models would have given me predictions over fourty, but my seed gives me a better prediction model, so I just kept mine.**
+
+Considering the relatively "low" R squared I wanted to try some other things out for my own curiosity not related to the assignment.
+```{r}
+# See the distribution
+library(ggplot2)
+
+ggplot(data_train, aes(x=cement, y=strength)) + geom_point() + geom_smooth(method="lm", col="red")
+# We can see there is an upwards trend, but with a lot of outliers. 
+
+#data_train$log_strength <- log(data_train$strength)
+#ggplot(data_train, aes(x=cement, y=log_strength)) + geom_point() + geom_smooth(method="lm", col="red")
+# Although the log transformation indeed reduce outliers, it will complicate the interpretability later on.
+
+# There are a lot of outliers for a linar regression, there is a positive trend but explains the low evaluation
+# cross-validation, ridge regression
+train_control <- trainControl(method="cv", number=10)  # 10-fold cross-validation
+model <- train(strength ~ . + .*. + I(cement^2) + I(slag^2) + I(ash^2) + I(water^2) + I(superplastic^2) + I(coarseagg^2) + I(fineagg^2) + I(age^2), data=data_train, method="ridge", Control=train_control)
+
+model_prediction <- predict(model, data_test)
+postResample(model_prediction, data_test$strength)
+
+
+#the bridge needs a strenght of 40
+option1 <- data.frame(cement=142, age = 28, ash = 130, slag = 167, water = 175, superplastic = 11, coarseagg = 825, fineagg = 825)
+option2 <- data.frame(cement=200, age = 14, ash = 130, slag = 167, water = 175, superplastic = 11, coarseagg = 825, fineagg = 825)
+option3 <- data.frame(cement=200, age = 14, ash = 200, slag = 167, water = 175, superplastic = 11, coarseagg = 825, fineagg = 825)
+
+predict(model, option1)
+predict(model, option2)
+predict(model, option3)
+
+```

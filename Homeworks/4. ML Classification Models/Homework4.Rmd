@@ -1,0 +1,238 @@
+---
+title: 'Homework #4'
+author: "Beatriz Wahle"
+date: "2024-11-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Loading alll the libraries at the beginning;.
+
+```{r}
+library(C50)
+library(caret)
+library(neuralnet)
+library(class)
+library(kernlab)
+library(smotefamily)
+```
+
+
+### 1. Import and clean the data
+
+Get the data:
+```{r}
+tele_data <- read.csv("tele.csv")
+```
+
+Removing unnecessary columns:
+```{r}
+tele_data$X <- NULL
+tele_data$duration <- NULL
+```
+
+Handling the Pdays column:
+```{r}
+table(tele_data$pdays)
+called <- sum(ifelse(tele_data$pdays < 999, 1,0))
+never_called <- sum(length(tele_data$pdays))
+called_ratio <- (called / (called + never_called))*100
+print(paste('The percentage of clients called in this variable is ', round(called_ratio,2),'% of the total database'))
+tele_data$pdays <- ifelse(tele_data$pdays == 999, 0, 1)
+```
+
+### 2. Convert factors into dummy variables using model.matrix command + some additional preprocessing
+```{r}
+#ENCODING
+encoded_data <- as.data.frame(model.matrix(~ . -1, tele_data))
+encoded_data$jobunknown <- NULL
+encoded_data$y <- encoded_data$yyes
+encoded_data$yyes <- NULL
+row.names(encoded_data) <- NULL
+
+#SCALING
+minmax <- function(x) {
+  (x - min(x)) / (max(x)-min(x))
+}
+scaled_data <- as.data.frame(lapply(encoded_data, minmax))
+```
+
+
+### 3. Separate into train and test dataset using a 50:50 split.
+```{r}
+test_rate <- 0.5
+set.seed(666)
+
+# Decision Tree, SVM and Logistic Regression Split - Encoded
+test_encoded_rows <- sample(1:nrow(encoded_data), test_rate*nrow(encoded_data))
+train_encoded <- encoded_data[test_encoded_rows, ]
+test_encoded <- encoded_data[-test_encoded_rows, ]
+
+# KNN, ANN Split - Encoded and Scaled
+train_scaled <- scaled_data[test_encoded_rows, ]
+test_scaled <- scaled_data[-test_encoded_rows, ]
+```
+
+
+### 4. Build the models:
+
+**Logistic Regression**
+Built a simple logistic regression and rather than pursuing a computationally-intensive process of building a giant model,
+use a step one that simplifies it, this approach builds a simple model and then it performs a stepwise selection on the simple model.
+```{r, cache=TRUE, warning = FALSE, message = FALSE}
+
+lr <- glm(y ~ ., data = train_encoded, family = binomial)
+stepwise_lr <- step(lr, direction = "both", trace = 0)
+
+prediction_lr <- predict(stepwise_lr, test_encoded, type = "response")
+binary_prediction_lr <- ifelse(prediction_lr < .25, 0, 1)
+
+confusionMatrix(as.factor(binary_prediction_lr),
+                as.factor(test_encoded$y),
+                positive = "1")
+```
+The logistic regression model achieved an accuracy of 88.12%, indicating good overall performance; however, this is heavily influenced by the class imbalance, where the majority class dominates. I did not use a balancing technique because I do not want to balance the dataset for some of the other models, and when combine the five, I need the same number of rows to build the final data frame.
+The Kappa statistic of 0.4119 suggests moderate agreement between the predicted and true labels, but there's room for improvement in distinguishing the classes. Sensitivity is low at 49.08%, meaning the model identifies fewer than half of the positive cases, while specificity is strong at 93.01%, showing excellent performance in identifying negatives. Improving sensitivity is crucial, especially in scenarios where correctly identifying the minority class is important.
+
+**KNN**
+```{r, cache = TRUE}
+y_col <- which(colnames(train_scaled) == "y")
+prediction_knn <- knn(train = train_scaled[,-y_col], 
+                      test = test_scaled[,-y_col], 
+                      cl = train_scaled[,y_col], 
+                      k = 1)
+summary(prediction_knn)
+
+confusionMatrix(as.factor(prediction_knn), as.factor(test_scaled$y), positive = "1")
+```
+The k-Nearest Neighbors model with `k=1` yielded an accuracy of 84.66%, which appears high but may be misleading due to the class imbalance in the dataset (where the prevalence of the positive class is only 11.12%). The Kappa statistic is 0.2174, indicating a relatively low level of agreement between predicted and actual labels beyond chance, which suggests the model struggles with distinguishing between classes effectively. The sensitivity (true positive rate) is 30.09%, showing that the model correctly identifies only about 30% of the positive cases. This low sensitivity, paired with a higher specificity (91.48%), suggests that the model favors predicting the negative class, resulting in many false negatives. Improvements are needed to enhance sensitivity and kappa for a more balanced and effective performance.
+
+**ANN**
+
+```{r, cache=TRUE}
+ann <- neuralnet(y ~ ., data = data.frame(train_scaled), hidden = 1, stepmax = 1e6, lifesign = "none", learningrate = 0.1)
+plot(ann)
+
+prediction_ann <- predict(ann, newdata = data.frame(test_scaled))
+summary(prediction_ann)
+
+binary_prediction_ann <- ifelse(prediction_ann > 0.25, 1, 0)
+confusionMatrix(as.factor(binary_prediction_ann),
+                as.factor(test_scaled$y),
+                positive = "1")
+```
+The neural network model achieved an accuracy of 87.84%, which is close to the baseline accuracy, given the class imbalance (where positive cases make up 11.12% of the data). The Kappa statistic is 0.4245, indicating moderate agreement between the model’s predictions and the actual labels, which suggests an improvement in distinguishing between classes compared to previous models. The sensitivity (true positive rate) is 53.19%, showing that the model correctly identifies just over half of the positive cases. This represents a notable improvement in sensitivity, though it still leaves room for enhancement, as the model continues to miss a significant number of positive cases. The specificity remains high at 92.18%, indicating strong performance in correctly identifying negative cases, but further tuning may help balance sensitivity and specificity more effectively.
+
+
+**SVM**
+In order to have the best SVM model possible, I did a function that runs the support vector machine with all the kernels and the outputs are the accuracy, kappa, and senstivity of each. That makes it easir to choose which kernel to use for the final model.
+```{r,cache=TRUE, warning = FALSE, message = FALSE}
+
+try_kernels <- function(kernel_name) {
+  model <- ksvm(as.factor(y) ~ ., data = train_scaled, kernel = kernel_name)
+  predictions <- predict(model, test_scaled)
+  cm <- confusionMatrix(as.factor(predictions), as.factor(test_scaled$y), positive = "1")
+  
+  accuracy <- cm$overall["Accuracy"]
+  kappa <- cm$overall["Kappa"]
+  sensitivity <- cm$byClass["Sensitivity"]
+  
+  # Return all metrics
+  return(c(accuracy = accuracy, kappa = kappa, sensitivity = sensitivity))
+}
+
+
+kernels <- c("vanilladot", "polydot", "rbfdot", "tanhdot", "anovadot", "laplacedot", "besseldot")
+sapply(kernels, try_kernels)
+
+svm <- ksvm(as.factor(y) ~ ., data = train_scaled,
+                          kernel = "besseldot")
+svm_prediction <- predict(svm, test_scaled)
+confusionMatrix(as.factor(svm_prediction),
+                as.factor(test_scaled$y),
+                positive="1")
+
+```
+The SVM model achieves an accuracy of 89.97%, indicating that most predictions align with actual values. However, the Kappa statistic of 0.2626 suggests a low agreement beyond chance, reflecting limited performance in handling class imbalance. The sensitivity (true positive rate) is only 19.26%, highlighting that the model struggles to correctly identify the positive class (1). While the specificity (true negative rate) is high at 98.81%, the imbalance between sensitivity and specificity indicates that the model is heavily biased toward the majority class, favoring predictions of 0. This suggests that the model’s performance on the minority class is inadequate and adjustments, such as class weighting or balancing, may be needed to improve sensitivity and overall balance.
+
+
+**Decision Trees**
+
+```{r, cache = TRUE}
+library(C50)
+model <- C5.0(as.factor(y) ~ ., data = train_encoded)
+plot(model)
+
+predictions <- predict(model, newdata = test_encoded)
+
+#confusionMatrix <- table(predictions, test_encoded$y)
+confusionMatrix(as.factor(predictions),
+                as.factor(test_encoded$y),
+                positive="1")
+
+cost_matrix <- matrix(c(0, 5,   
+                        1, 0),  
+                      nrow = 2,
+                      byrow = TRUE)
+rownames(cost_matrix) <- colnames(cost_matrix) <- c("0", "1")
+
+model2 <- C5.0(as.factor(y) ~ ., data = train_encoded, costs = cost_matrix)
+
+predictions2 <- predict(model2, newdata = test_encoded)
+
+confusionMatrix(as.factor(predictions2),
+                as.factor(test_encoded$y),
+                positive="1")
+```
+The SVM model achieves an accuracy of 86.49%, which is slightly lower than the no-information rate, indicating moderate performance overall. The Kappa statistic of 0.4206 reflects fair agreement beyond chance, showing an improvement in handling class imbalance compared to the previous model. The sensitivity (true positive rate) is 59.78%, indicating that the model is better at identifying the positive class (1) than before, though it still misses a significant portion of true positives. The balanced accuracy of 74.81% demonstrates more even performance between sensitivity and specificity. While the model now performs better on the minority class, there is still room for improvement, particularly in increasing the positive predictive value (42.38%).
+
+
+**Gathering the predictions:**
+```{r}
+response <- test_encoded$y
+all_predictions <- data.frame(binary_prediction_lr, prediction_knn, binary_prediction_ann, svm_prediction, predictions2, response)
+str(all_predictions)
+all_predictions$binary_prediction_lr <- as.factor(all_predictions$binary_prediction_lr)
+all_predictions$binary_prediction_ann <- as.factor(all_predictions$binary_prediction_ann)
+all_predictions$response <- as.factor(all_predictions$response)
+```
+
+```{r}
+test_rate <- 0.3
+set.seed(666)
+
+test_prediction_rows <- sample(1:nrow(all_predictions), test_rate*nrow(all_predictions))
+train_predictions <- all_predictions[test_prediction_rows, ]
+test_predictions <- all_predictions[-test_prediction_rows, ]
+```
+
+```{r}
+model <- C5.0(as.factor(response) ~ ., data = train_predictions)
+plot(model)
+
+predictions <- predict(model, newdata = test_predictions)
+
+confusionMatrix <- table(predictions, test_predictions$response)
+print(confusionMatrix)
+
+cost_matrix_prediction <- matrix(c(0, 5,   
+                                  1, 0),  
+                                  nrow = 2,
+                                  byrow = TRUE)
+rownames(cost_matrix) <- colnames(cost_matrix) <- c("0", "1")
+
+model2 <- C5.0(as.factor(response) ~ ., data = train_predictions, costs = cost_matrix_prediction)
+
+predictions2 <- predict(model2, newdata = test_predictions)
+
+confusionMatrix(as.factor(predictions2),
+                as.factor(test_predictions$response),
+                positive="1")
+```
+
+
+The stacked model achieves an accuracy of 86.42%, which is slightly lower than the SVM and logistic regression but comparable to the decision tree. Its Kappa (0.4294) is higher than most individual models, indicating better agreement beyond chance. Sensitivity improves significantly to 61.35%, outperforming all individual models, showing enhanced performance in identifying the positive class. Balanced accuracy (75.48%) is slightly better than the decision tree and higher than other models. Overall, the stacked model effectively improves the balance between sensitivity and specificity, making it a strong choice for handling imbalanced datasets.
+

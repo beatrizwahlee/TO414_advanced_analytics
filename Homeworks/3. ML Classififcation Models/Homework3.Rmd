@@ -1,0 +1,197 @@
+---
+title: "Homework 3"
+author: "Beatriz Wahle"
+date: "2024-10-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Homework 3 - Predictive Models for Telemarketing Dataset
+
+The homework requests to build 3 models: a logistic regression, a KNN and a ANN, their corresponding confusion matrices, and then combine the three models, and create a combined confusion matrix. 
+
+
+Before starting with building the model, we need to (1) get the data, (2) clean the data, (3) split the data, to then finally be able to follow the homework requests.
+
+#### 1. Get the data
+
+```{r}
+tele_data <- read.csv('tele.csv')
+summary(tele_data)
+str(tele_data)
+```
+
+Overall comments on the dataset:
+ - Pay attention to duration (post call column), it is not valid to use to make the prediction model
+ - Convert 'y' (the variable to be predicted) to binary (0-1)
+ - A lot of character variables to be transformed into factors
+ - Problem with the 'pdays' columns: 999 days was wrongly used for customers never contacted
+ 
+#### 2. Clean the data
+```{r}
+# Deleting X
+tele_data$X <- NULL
+
+# Transforming character columns into factors:
+tele_data$job<-as.factor(tele_data$job)
+tele_data$marital<-as.factor(tele_data$marital)
+tele_data$education<-as.factor(tele_data$education)
+tele_data$default<-as.factor(tele_data$default)
+tele_data$housing<-as.factor(tele_data$housing)
+tele_data$loan<-as.factor(tele_data$loan)
+tele_data$contact<-as.factor(tele_data$contact)
+tele_data$month<-as.factor(tele_data$month)
+tele_data$day_of_week<-as.factor(tele_data$day_of_week)
+tele_data$poutcome<-as.factor(tele_data$poutcome)
+tele_data$day_of_week<-as.factor(tele_data$day_of_week)
+
+# Pdays colum
+# Comment below on why this was the solution we chose
+print(table(tele_data$pdays))
+print(sum(ifelse(tele_data$pdays < 999, 1,0)))
+tele_data$pdays<-ifelse(tele_data$pdays==999,0,1)
+
+# y column
+tele_data$y<-ifelse(tele_data$y=="no",0,1)
+
+# Check 
+summary(tele_data)
+str(tele_data)
+```
+
+Regarding the 'pdays' column, we were looking for the distribution of the data, to understand how much of the customers weren't contacted (999), and we could see that it was the case of the majority of the dataset (`sum(tele_data$pdays==0)/nrow(tele_data)*100`%). With that considered, we decided making the variable binary for now, for simplicity matters (0 not being contacted, 1 being contacted at some point). That can be changed later if we believe there is relevance the intervals of the contacts between the less than 4% of the dataset.
+
+
+Another note, factor variables need to be converted into dummies, but since the 'model.matrix' function used to do so takes out the 'y' from the matrix, I need to first randomly split the data, to then create the dummies and have separate y for training and testing.
+
+
+**Scaling, Balancing and Encoding before Splitting**
+
+Here I'll be adding a small extra step before splitting the data. Scaling can be really important for algorithms sensitive to numerical feature scaling. Although the Logistic Regression would probably benefit more from a z-score scaling (standardization), I opted for a min-max scaling for the sake of the KNN and the Neural Networks.
+
+As only numerical columns are scaled, the categorical ones need to be encoded. For that, I'll create dummies of each (aka one-hot encoding).
+```{r}
+minmax <- function(x){
+  (x - min(x)) / (max(x) - min(x))
+}
+
+# Only scale numeric columns 
+numeric_columns <- sapply(tele_data, is.numeric)
+numeric_col_scaled <- as.data.frame(lapply(tele_data[, numeric_columns], minmax))
+scaled_data <- cbind(numeric_col_scaled, tele_data[, !numeric_columns])
+
+# For categorical columns
+scaled_data <- as.data.frame(model.matrix( ~ . - 1, data = scaled_data))
+
+
+library(smotefamily)
+set.seed(666)
+smote_data <- SMOTE(scaled_data[, -which(names(scaled_data) == "y")], scaled_data$y, K = 5, dup_size = 2)
+balanced_data <- data.frame(smote_data$data)
+names(balanced_data)[ncol(balanced_data)] <- "y"
+balanced_data$y <- as.numeric(balanced_data$y)
+
+```
+
+
+#### 3. Split the data
+
+```{r}
+set.seed(666)
+test_rate <- 0.25
+test_rows <- sample(1:nrow(balanced_data), test_rate*nrow(balanced_data))
+test_data <- balanced_data[test_rows, ]
+train_data <- balanced_data[-test_rows, ]
+```
+
+
+#### 4. Evaluate the models
+
+Here is where the homework requests start. The first thing to do is to create the individual models and their respective confusion matrices.
+
+**Logistic Regression Models**
+```{r, cache=TRUE}
+lr <- glm(y ~ ., data = train_data, family = binomial)
+summary(lr)
+
+# giantmodel <- glm(y ~ . + .*. + I(age^2) + I(duration^2)+ I(campaign^2)+ I(previous^2) + I(pdays^2) + I(cons.price.idx^2) + I(cons.conf.idx^2) + I(euribor3m^2)+ I(nr.employed^2), data = train_data, family ="binomial")
+
+# stepmodel <- step(giantmodel, direction = "backward")
+```
+
+This is what I would do as seen in class, however, this giant model brings an unnecessary amount of iterations and complexity. This may simply create overfitting and multicolinearity. For a simpler but still efficient model I used stepwise selection, which can improve the model by performing stepwise selection to remove insignificant predictors and avoid overfitting. This helps in selecting the most significant variables for the model.
+
+```{r, chache=TRUE}
+stepwise_lr <- step(lr, direction = "both")
+```
+
+**Logistic Regression Prediction and Confusion Matrix**
+```{r}
+
+prediction_lr <- predict(stepwise_lr, test_data, type = "response")
+binary_prediction_lr <- ifelse(prediction_lr < .25, 0, 1)
+library(caret)
+confusionMatrix(as.factor(binary_prediction_lr),
+                as.factor(test_data$y),
+                positive = "1")
+```
+
+
+**KNN Model Prediciton and Confusion Matrix**
+```{r}
+library(class)
+
+prediction_knn <- knn(train = train_data[,-55], # [line, column]
+                      test = test_data[,-55], 
+                      cl = train_data[,55], 
+                      k = 15)
+summary(prediction_knn)
+
+library(caret)
+
+confusionMatrix(as.factor(prediction_knn), as.factor(test_data$y), positive = "1")
+```
+
+**Neural Network Model Prediction and Confusion Matrix**
+```{r, cache=TRUE}
+column_names <- colnames(train_data)
+library(neuralnet)
+
+#train_data <- data.frame(train_data)  # Convert factors to dummy variables
+ann <- neuralnet(y ~ ., data = train_data, hidden = 1, stepmax = 1e8, lifesign = "full", learningrate = 0.8)
+plot(ann)
+
+prediction_nn <- predict(ann, newdata = test_data)
+summary(prediction_nn)
+
+
+binary_prediction_nn <- ifelse(prediction_nn > 0.25, 1, 0)
+confusionMatrix(as.factor(binary_prediction_nn),
+                as.factor(test_data$y),
+                positive = "1")
+```
+
+
+
+#### Combine the 3 models
+
+Here we are combining the results of the 3 models, giving a higher rate to the Neural Network for having the best Accuracy and Sensitivity over all the models. 
+
+```{r}
+binary_prediction_lr <- as.factor(binary_prediction_lr)
+prediction_knn <- as.factor(prediction_lr)
+binary_prediction_nn <- as.factor(binary_prediction_nn)
+
+# Apply weighted voting (example: logistic gets more weight)
+combined_pred <- as.factor(ifelse(rowSums(cbind(binary_prediction_lr == "1", prediction_knn == "1", (binary_prediction_nn == "1")*2)) >= 2, "1", "0"))
+
+combined_confusion_matrix <- confusionMatrix(combined_pred, as.factor(test_data$y), positive = "1")
+combined_confusion_matrix
+
+```
+
+As an overall conclusion of the homework we can see how simple models (a Logistic Regression, a KNN and a 1 neuron Neural Network) can offer good results - a accuracy of 0.86 and a sensitivity of 0.93. Also, the number of false negatives (213) represent only 16.9% of the overall dataset.
+

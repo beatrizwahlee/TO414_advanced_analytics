@@ -1,0 +1,1020 @@
+---
+title: "Report - Recommendations to Call Center"
+author: "Data Detectives"
+date: "2024-10-28"
+output: 
+  html_document:
+    theme: yeti
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Table of Content
+
+1.  **Introduction**
+
+    a.  Getting and Cleaning the Data
+
+2.  **Descriptive Analysis, Data Visualization and Storytelling**
+
+    a.  Current Scenario
+
+    b.  Break-even Success Rate
+
+    c.  Visualizations
+
+3.  **Supervised Learning**
+
+    a.  Defining the of clusters
+
+    b.  Building the clusters
+
+    c.  Financial Performance/Opportunity
+
+4.  **Unsupervised Learning**
+
+    a.  Balancing the Data
+
+    b.  Splitting the Data
+
+    c.  Logistic Regression Model
+
+    d.  K-Nearest Neighbor Model
+
+    e.  Neural Network Model
+
+    f.  Combined Predictions
+
+    g.  Financial Performance/Opportunity
+
+5.  **Conclusion**
+
+------------------------------------------------------------------------
+
+### Introduction:
+
+This report addresses the current financial challenges faced by the Call
+Center and explores potential opportunities through data-driven
+solutions. As previously highlighted by Susan Kim and acknowledged by
+the entire firm, the business is currently experiencing financial
+losses. This report will outline possible strategies for the firm to
+achieve break-even or profitability, leveraging data collected over the
+recent period.
+
+Given the diverse audience for this report—comprising both business and
+data specialists—some sections will include technical documentation.
+However, these technical details are structured to ensure that the
+primary business goals and opportunities remain clear and accessible at
+each stage, leading to actionable financial and business
+recommendations.
+
+For data specialists or enthusiasts, the entire report is recommended
+reading. For those with a business focus who are primarily interested in
+results and recommendations, please refer to sections marked with a
+“**Business Note:**” for concise insights and strategic guidance.
+
+#### a. Getting and Cleaning the Data:
+
+As mentioned, this report aims to understand the current situation of
+the call center, measure their losses, and find opportunities for it to
+break even, or even maybe profit. Before staring with the analysis of
+the current situation and the break even calculation, we need to get the
+data and clean it. For organizations sake, all the libraries were called
+in this first snippet, just so they are not lost or repeated in
+different parts of the code.
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+# All Libraries used in this file:
+library(ggplot2)
+library(dplyr)
+library(factoextra)
+library(smotefamily)
+library(randomForest)
+library(tidyr)
+library(caret)
+library(neuralnet)
+library(class)
+```
+
+Before we start with any calculation, it is important to get the data we
+will be working with. The following code demonstrates how to do so. By
+using the `stringAsFactors = T` function, the data variables will be
+read as factors, avoiding a manual transformation of each, as we will
+need data as factors on further steps of this report.
+
+```{r}
+tele_data <- read.csv("tele.csv", stringsAsFactors = T) 
+```
+
+<br>
+
+As aforementioned above, we would like to care of our data prior to
+calculations; in particular, cleaning our data. Doing this now will aid
+in our analysis, as we don't want any unnecessary columns or improper
+data disrupting our analysis.
+
+<br>
+
+**Removing unnecessary columns:**
+
+There are two columns in particular we would like to remove from our
+dataset; `X` and `duration`. `X` is just the row count, and is not
+pertinent to us at all. `duration` is a post call variable, collected
+only after a call has been made. If our goal is to predict future
+successful calls, a post call variable is invalid to use, and will thus
+be removed; how can we use a variable recorded after a call prior to one
+being made?
+
+```{r}
+tele_data$X <- NULL
+tele_data$duration <- NULL
+```
+
+<br> **Pdays column:**
+
+Another column to clean is `pdays`: the number of days that passed by
+after the client was last contacted from a previous campaign. Looking at
+the distribution of values the column takes, the vast majority of
+observations have a value of 999, around 96% to be exact. In this case,
+999 represents a client that has never been contacted before. Because of
+the distribution and the nature of the column, we converted it into a
+binary variable, 0 if a client hasn't been contacted before and 1 if
+they have been; this will make the column better formatted to use in our
+analysis and easier to interpret. We don't believe we will loose
+predictive power by not knowing the time passed from the previous call
+from around 3% of the data set.
+
+```{r}
+table(tele_data$pdays)
+called <- sum(ifelse(tele_data$pdays < 999, 1,0))
+never_called <- sum(length(tele_data$pdays))
+called_ratio <- (called / (called + never_called))*100
+print(paste('The percentage of clients called in this variable is ', round(called_ratio,2),'% of the total database'))
+tele_data$pdays <- ifelse(tele_data$pdays == 999, 0, 1)
+```
+
+<br> **Encoding:**
+
+We now convert the original dataset into one that represents each
+factor/level within a column into it's own separate column
+(dummies/one-hot encoding). For example, marital turns into
+maritalunknown, maritalsingle, etc. However, one thing to note is that
+the model matrix line drops one of the columns for each factor, as to
+avoid multicolinearity; this was not the case for the job column. Likely
+due to the inconsistent formatting of the name of the levels of that
+variable, our model.matrix line wouldn't drop a column, so we manually
+dropped one. Additionally, the function changed the name of you
+dependent variable to `yyes`, so we converted back to `y`. This is just
+a formality to keep the name consistent through all the report.
+
+```{r}
+encoded_data <- as.data.frame(model.matrix(~ . -1, tele_data))
+encoded_data$jobunknown <- NULL
+encoded_data$y <- encoded_data$yyes
+encoded_data$yyes <- NULL
+```
+
+<br> **Scaling Numerical Variables:**
+
+Finally, the last step of cleaning is scaling our data. Further on in
+our analysis, we will build a KNN and ANN model; for these models, our
+numeric factors have to be comparable to one another. For this to
+happen, they have to be on the same scale, so we create a separate
+variable that contains scaled data for the those models. We utilize min
+max scaling in this instance, so each numeric variable is now on a scale
+of 0-1.
+
+```{r}
+minmax <- function(x) {
+  (x - min(x)) / (max(x)-min(x))
+}
+scaled_data <- as.data.frame(lapply(encoded_data, minmax))
+```
+
+<br> We have now cleaned our data; removed columns of disinterest,
+converted some columns to binary scaling, scaled our data and converted
+factors into columns. We are now ready to move on with our analysis.
+
+------------------------------------------------------------------------
+
+### Descriptive Analysis, Data Visualization and Storytelling:
+
+Before trying to find potential solutions, we first want to understand
+the problem we are trying to solve and understand our data. We will do
+this with a few calculations and visualizations.
+
+#### a. Current Scenario
+
+We were given some financial details about the call center at the start
+of the case; using this information, we calculate the current financial
+state of the company given the data.
+
+```{r}
+successful_calls <- sum(tele_data$y == "yes")
+total_calls <- nrow(tele_data)
+success_rate <- successful_calls / total_calls
+
+# Define the financial parameters - given by MK - to calculate the BEP
+training_cost <- 1000 
+variable_cost_per_call <- 1
+contribution_margin <- 10
+avg_retention <- 1000
+
+total_var_cost <- (total_calls*variable_cost_per_call) + 
+                  ((total_calls/avg_retention)*training_cost)
+
+revenue_per_call <- (total_var_cost/total_calls) + contribution_margin
+total_revenue <- (success_rate*total_calls) * revenue_per_call
+
+break_even_revenue <- (total_var_cost)/(contribution_margin)
+gross_margin <- total_revenue - total_var_cost
+```
+
+<br> **Business Note:** Interesting insights we can gather from a simple
+data analysis are the following:
+
+1.  The current success rate from calls is **`r success_rate * 100`%**,
+    which means that out of the `r total_calls` only
+    `r successful_calls` are successful. As already known by the entire
+    staff, this is very low.
+2.  Since there are no major fixed costs to account for - as mentioned
+    by MK - we can only calculate the break-even revenue (no fixed costs
+    to deduct). This tells us how much total revenue the company needs
+    to generate to cover their variable costs. The current break-even
+    revenue for the call center is \$`r break_even_revenue`.
+3.  Currently, the call center's gross margin is **$ -26696**. This just confirms what everyone already knew, that the call center is losing money.
+
+In order to solve this problem, instead of simply increasing the number
+of total calls, and hoping to increase the total number of successful
+calls with it, the more efficient solution is to focus on increasing the
+success rate to be able to break even, or even profit, at the current
+level of sales. With that in mind, the first question to answer is by
+how much would the success rate would have to increase for them to break
+even?
+
+In order to answer this question, there is an important detail to take
+into account. Besides just considering the current variable costs the
+company has, and the contribution margin per call, we have to remember
+MK's insight that: "every 1% increase in call success rate increased the
+average retention rate by 100 calls."
+
+Getting back to the technical content, we built the following function
+to determine what the break-even success rate should be; what portion of
+calls needed to be successful for the company to break-even at the
+current number of total calls. This calculation also factors in the
+increment in average retention rate with a 1% increase in success rate.
+While revenue is less than cost (or profit \< 0), the function still
+runs, incrementing the success rate by 1% and retention by 100, than
+recalculating until we break even. We than get as the return the success
+rate upon completion of the while loop.
+
+```{r}
+find_success_rate <- function(total_calls, contribution_margin, total_var_cost,  variable_cost_per_call, avg_retention, training_cost, success_rate) {
+
+  while (((success_rate * total_calls)*(contribution_margin+variable_cost_per_call))-total_var_cost < 0) {
+    success_rate <- success_rate + 0.01 # increment success rate by 1%
+    avg_retention <- avg_retention+100
+    total_var_cost <- (total_calls*variable_cost_per_call) + 
+                  ((total_calls/(avg_retention))*training_cost) # adjust effective calls
+  }
+  
+  return(success_rate)
+}
+
+necessary_success_rate <- find_success_rate(total_calls, contribution_margin, total_var_cost,  variable_cost_per_call, avg_retention, training_cost, success_rate)
+```
+
+<br>
+
+**Business Note:** The success rate needed to break-even at the current
+level of total calls it **`r necessary_success_rate * 100`%**, which
+represent a `r  (necessary_success_rate - success_rate) * 100` %
+increase from the current success rate. This imply a total of
+`r round((necessary_success_rate * total_calls), digits = 2)` successful
+calls per month.
+
+Now, to conclude this first part of the analytics and visualizations, we
+are going to display some graphics that will help with a better
+understanding of the problem, and potential opportunities of solution.
+
+From Figure 1, displayed below, we can simple compare the current
+success rate with the necessary one.
+
+```{r, echo=FALSE}
+success_data <- data.frame(
+  metric = c("Current Success Rate", "Necessary Success Rate"),
+  rate = c(success_rate, necessary_success_rate)
+)
+
+ggplot(success_data, aes(x = metric, y = rate)) +
+  geom_bar(stat = "identity", fill = "#72D57D") +
+  labs(title = "Figure 1: Current vs. Necessary Success Rate", y = "Success Rate", x = "Metric")
+```
+
+**Business Note:** Although from this graphic it may seem like there is
+a need for a huge improvement, when looking at the overall numbers, we
+can see that is a relative small improvement if looking at the total
+amount of calls. Look for the green increase from left to right on
+Figure 2.
+
+<br>
+
+```{r, echo=FALSE}
+failure_rate <- 1 - success_rate
+necessary_failure_rate <- 1 - necessary_success_rate
+
+call_outcomes <- data.frame(
+  scenario = rep(c("Current", "Necessary"), each = 2),
+  outcome = rep(c("Success", "Failed"), 2),
+  rate = c(success_rate, failure_rate, necessary_success_rate, necessary_failure_rate)
+)
+
+ggplot(call_outcomes, aes(x = scenario, y = rate, fill = outcome)) +
+  geom_bar(stat = "identity", position = "stack", width = 0.5) +
+  labs(title = "Figure 2: Comparison of Current vs Necessary Success/Failure Rates",
+       x = "Scenario", 
+       y = "Proportion",
+       fill = "Outcome") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("Success" = "#72D57D", "Failed" = "#FA746C")) +
+  theme_minimal()
+```
+
+**Business Note:** This figure is similar to figure 1, except now we
+show the successes in relation to failures in both the current and
+necessary success rate. This further illustrates how small the
+improvement has to be in order for the call center to turn things
+around.
+
+<br> Once we have outlined the overall objective to break even. It is
+important to understand how to reach that goal. How can the call center
+increase the success rate? The answer can seem quite simple, by focusing
+the calls on the people that are most likely to subscribe to the term
+deposit. To facilitate the visualization, let's look at how the behavior
+of customers change in some of the variables offered by the dataset.
+
+```{r, echo=FALSE}
+# FIGURE 3: Overall success and failure of calls per age + the success rate per age.
+
+# Create a new data set to organize the data as we need it to plot.
+outcomes_per_age <- tele_data %>%
+  filter(age <= 80) %>% # from 80 on is too little data an the success rate is meaningless
+  group_by(age) %>% # from now on everything is done per each age group
+  summarise( # new summary data frame with the following variables/calculations for each group
+    total_calls = n(), # total calls per age group
+    successful_calls = sum(y == "yes"), # successful calls per age
+    failed_calls = sum(y == "no"), # failed calls per age
+    success_rate = successful_calls / total_calls # success rate per age
+  ) %>% # reshape successful and failed calls into 2 col, one tells you if succ of fail, the other is a count 
+  gather(key = "outcome", value = "count", successful_calls, failed_calls)
+
+# For later, to scale the success rate plot line
+max_count <- max(outcomes_per_age$count)
+
+
+ggplot(outcomes_per_age, aes(x = age)) +
+  # bar plot for number of successful and failed calls
+  geom_bar(aes(y = count, fill = outcome), stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("failed_calls" = "#FFC086", "successful_calls" = "#B7FABF"), 
+                    name = "Call Outcome", 
+                    labels = c("Failed", "Successful")) +
+  # line plot for success rate
+  geom_line(aes(y = success_rate * max_count, group = 1), color = "#4E85B5", linewidth = 0.35) +
+  geom_point(aes(y = success_rate * max_count), color = "#4E85B5", size = 0.5) +
+  scale_y_continuous(
+    name = "Number of Calls",
+    sec.axis = sec_axis(~ . / max_count, name = "Success Rate", labels = scales::percent)
+  ) +
+  labs(title = "Figure 3: Number of Successful and Failed Calls by Age with Success Rate",
+       x = "Age") +
+  theme_minimal()
+```
+
+**Business Note:** We also wanted to take a look at how the success rate
+varies in relation to certain columns; in this case, Age. We show the
+portion of successes compared to failures, the success rate, and the
+number of observations for the range of ages. Although they have less
+calls when compared to 30-40 year olds, 18-25 year olds and 60-80 year
+olds have the highest success rate; this could prove insightful further
+into our analysis.
+
+```{r, echo=FALSE}
+# FIGURE 4: Overall success and failure of calls per job + the success rate per job
+
+# same as before, but now grouping by job
+outcomes_per_job <- tele_data %>%
+  group_by(job) %>% 
+  summarise(
+    total_calls = n(), 
+    successful_calls = sum(y == "yes"), 
+    failed_calls = sum(y == "no"), 
+    success_rate = successful_calls / total_calls 
+  ) %>% 
+  gather(key = "outcome", value = "count", successful_calls, failed_calls)
+
+max_count <- max(outcomes_per_age$count)
+
+ggplot(outcomes_per_job, aes(x = job)) +
+  
+  geom_bar(aes(y = count, fill = outcome), stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("failed_calls" = "#FFC086", "successful_calls" = "#B7FABF"), 
+                    name = "Call Outcome", 
+                    labels = c("Failed", "Successful")) +
+  
+  geom_line(aes(y = success_rate * max_count, group = 1), color = "#4E85B5", linewidth = 0.35) +
+  geom_point(aes(y = success_rate * max_count), color = "#4E85B5", size = 0.5) +
+  scale_y_continuous(
+    name = "Number of Calls",
+    sec.axis = sec_axis(~ . / max_count, name = "Success Rate", labels = scales::percent)
+  ) +
+  labs(title = "Figure 4: Number of Successful and Failed Calls by Job with Success Rate",
+       x = "Job") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**Business Note:** Similar to figure 3, we now showcase successes,
+failures, and success rate by occupation type; we see that some
+occupation types, like admin, blue-collar, and technician, have a high
+number of calls, as well as that some occupation types like retired and
+student have higher success rates.
+
+```{r, echo=FALSE}
+# FIGURE 5: Overall success and failure of calls per campaign + the success rate per campaign
+
+# same as before, but now grouping by campaign
+outcomes_per_campaign <- tele_data %>%
+  filter(campaign <= 15) %>%
+  group_by(campaign) %>% 
+  summarise(
+    total_calls = n(), 
+    successful_calls = sum(y == "yes"), 
+    failed_calls = sum(y == "no"), 
+    success_rate = successful_calls / total_calls 
+  ) %>% 
+  gather(key = "outcome", value = "count", successful_calls, failed_calls)
+
+max_count <- max(outcomes_per_campaign$count)
+
+ggplot(outcomes_per_campaign, aes(x = campaign)) +
+  
+  geom_bar(aes(y = count, fill = outcome), stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("failed_calls" = "#FFC086", "successful_calls" = "#B7FABF"), 
+                    name = "Call Outcome", 
+                    labels = c("Failed", "Successful")) +
+  
+  geom_line(aes(y = success_rate * max_count, group = 1), color = "#4E85B5", linewidth = 0.35) +
+  geom_point(aes(y = success_rate * max_count), color = "#4E85B5", size = 0.5) +
+  scale_y_continuous(
+    name = "Number of Calls",
+    sec.axis = sec_axis(~ . / max_count, name = "Success Rate", labels = scales::percent)
+  ) +
+  labs(title = "Figure 5: Number of Successful and Failed Calls by Number of Contacts performed during this Campaign with Success Rate",
+       x = "Campaign") +
+  theme_minimal()
+```
+
+**Business Note:** Finally, we look at the three metrics from before,
+except now by the number of calls made to a client. We can see that the
+success rate dwindles upon repeated calls, something to note going
+forward.
+
+<br> **Business Note:** Upon inspecting our visuals, we have a few
+takeaways. We don't need to increase the success rate by too much in
+order or the call center to break even. Additionally, the variables of
+Age, Job, and Campaign may be of significance when conducting our
+analysis; we see clear values for all three that increase the success
+rate. We will see if these findings come to fruition, or if they weren't
+significant enough.
+
+------------------------------------------------------------------------
+
+### Supervised Learning:
+
+**Business Note:** With a comprehensive understanding of the current
+situation and the call center’s distance from break-even, we can begin
+exploring opportunities to leverage collected data to improve the
+success rate. In this section, we will focus on identifying distinct
+clusters of customers—groups of individuals who share similar
+characteristics or behaviors. The purpose of clustering is to, once
+these groups are defined, analyze the varying success rates across them.
+This approach enables associates to prioritize calls to clusters with
+higher success rates, optimizing efficiency and potentially boosting
+overall performance.
+
+<br>
+
+#### a. Defining the of clusters
+
+The code below is getting the scaled data, deleting the prediction
+variable (as you don't want it to be part of the variables used to build
+the clusters), and attributing that to a new data, `clustering_data`.
+Before constructing clusters, we first need to determine the optimal
+number of clusters. This can be done using several techniques, including
+Within-Cluster Sum of Squares (WSS), Gap Statistics, and Silhouette
+analysis—all of which are built-in functions in R.
+
+However, with a dataset of over 50,000 observations across 53 variables,
+these techniques can be computationally intensive and reached our
+computers' memory limitations. To address this without increasing memory
+allocation on our device, we use Principal Component Analysis (PCA) to
+reduce the dimensionality of the data.
+
+PCA transforms the original variables into a smaller set of new,
+uncorrelated variables called principal components. Each principal
+component captures a certain amount of the total variance in the data.
+By selecting only the components that explain the majority of the
+variance (for example, 90-95%), we effectively condense the information
+from many variables into a few components. This reduces the dataset's
+dimensionality, making computations faster and more memory-efficient
+without sacrificing significant information.
+
+After applying PCA, we select a subset of components that explains 90%
+of the data's variance. This reduced dataset, `clustering_data_pca`, was
+still computationally heavy, so we decided to sample 8,000 observations
+and from that apply the mentioned techniques (WSS, Gap Statistics, and
+Silhouette) to determine the optimal number of clusters.
+
+```{r, cache = TRUE, warning = FALSE, message = FALSE}
+y_col <- which(colnames(tele_data) == "y")
+
+clustering_data <- scaled_data[,-y_col]
+clustering_data <- as.data.frame(clustering_data)
+
+numeric_data <- clustering_data[sapply(clustering_data, is.numeric)]
+pca_result <- prcomp(numeric_data, scale. = TRUE)
+
+explained_variance <- summary(pca_result)$importance[3,]
+num_components <- which(cumsum(explained_variance) >= 0.90)[1]  
+clustering_data_pca <- pca_result$x[, 1:num_components]
+
+set.seed(666)
+clustering_data_pca_sample <- clustering_data_pca[sample(nrow(clustering_data_pca), 8000), ]
+
+fviz_nbclust(clustering_data_pca_sample, kmeans, method = "wss")
+fviz_nbclust(clustering_data_pca_sample, kmeans, method = "gap_stat")
+fviz_nbclust(clustering_data_pca_sample, kmeans, method = "silhouette")
+
+```
+
+Choosing **k=6** based on the provided plots can be supported with
+statistical reasoning, as follows:
+
+-   Within-Cluster Sum of Squares (WSS): The WSS plot shows a decreasing
+    trend in total WSS as k increases. There is a noticeable "elbow" or
+    reduction in the rate of decrease around k=6, indicating that adding
+    more clusters beyond this point yields diminishing returns in terms
+    of reducing within-cluster variance. Choosing k=6 thus balances
+    between cluster compactness and parsimony, capturing distinct
+    customer segments without unnecessary complexity.
+
+-   Gap Statistic: The Gap Statistic plot shows that the optimal k might
+    be around 5, as the gap value peaks there. However, the difference
+    between k=5 and k=6 is minor, suggesting that k=6 is also a strong
+    candidate for maximizing the separation between clusters. Since
+    lower values of k do not capture the success rate effectively, k=6
+    is an appropriate choice to maintain interpretability while
+    capturing meaningful patterns.
+
+-   Silhouette: The Silhouette plot shows a local peak at k=2,
+    suggesting high cohesion and separation for very small clusters.
+    However, for more granular clustering, k=6 still maintains a
+    reasonable silhouette width without a significant drop in quality.
+    This implies that the clusters are relatively well-defined and
+    distinct at k=6, supporting the choice.
+
+<br>
+
+#### b. Building the clusters
+
+After determining that we will use 6 clusters, we proceed with building
+them. The first few lines of code create the clusters using the k-means
+algorithm with k=6 and add a new column to `clustering_data` that
+specifies the assigned cluster for each row.
+
+Next, we use the `fviz_cluster` function from the `factoextra` library
+to visualize the clusters. The first plot shows each data point within
+its respective cluster, while the second plot adds ellipses representing
+the normal distribution for each cluster, providing a clearer view of
+the cluster boundaries and dispersion.
+
+Finally, we integrate the cluster assignments into the original
+`scaled_data`, which includes the target variable `y.` Using `tapply`,
+we calculate the mean value of `y` for each cluster. This calculation
+helps us understand the average outcome or behavior (as represented by
+`y`) within each cluster.
+
+```{r, cache=TRUE}
+#set.seed(123) 
+set.seed(666)
+km <- kmeans(clustering_data, 6)
+clustering_data$cluster <- km$cluster
+
+fviz_cluster(km, data = clustering_data, geom = "point")
+fviz_cluster(km, data = clustering_data, geom = "point", ellipse = TRUE, ellipse.type = "norm", ellipse.level = 0.95, ellipse.alpha = 0.1)
+
+scaled_data$cluster <- km$cluster
+tapply(scaled_data$y, scaled_data$cluster,mean)
+```
+
+Although the graphics appear to show overlapped clusters, it is
+important to remember this is a 2D graphic representing
+multi-dimensions, so they are not really overlapped. As for the `y` mean
+per cluster, it allows us to identify clusters with higher success rates
+(the ones with a higher means) and target them more effectively.
+
+As seen by the output of the `tapply` function, cluster 3 is the one
+with the highest mean at 23.6%, followed by cluster 2 with a mean of
+20.4%.
+
+**Business Note:** Now that we have the clusters built, we can see which
+are likely to be the most profitable ones when looking at the clusters
+mean on failed (0) and successful (1) calls. Clusters **2** and **3**
+are likely to be the ones with the highest success rate. In the next
+segment we would look at how can we convert this concept into convincing
+financial figures.
+
+<br>
+
+#### c. Financial Performance/Opportunity
+
+In this segment we come back to the initial calculations of Part A, of
+understanding the current scenario, but simulating would would have been
+the performance if the call center only called cluster 3, or called
+cluster 2 and 3. The other clusters have too low of a mean (lower than
+the current success rate) that it is not reasonable to call them as
+well.
+
+```{r}
+cluster_three <- scaled_data[scaled_data$cluster == 2, ]
+c3_total_calls <- nrow(cluster_three)
+c3_succesful_calls <- nrow(cluster_three[cluster_three$y==1, ])
+c3_success_rate <- c3_succesful_calls/c3_total_calls
+
+c3_revenue <- (c3_success_rate*c3_total_calls) * revenue_per_call
+
+difference_success_rate <- (c3_success_rate - success_rate)*100
+c3_total_cost <- (c3_total_calls*variable_cost_per_call) + 
+                  ((c3_total_calls/(avg_retention+(100*difference_success_rate)))*training_cost)
+
+c3_gross_margin <- round((c3_revenue - c3_total_cost), 2)
+```
+
+```{r}
+cluster_three_and_two <- scaled_data[scaled_data$cluster %in% c(2, 3), ]
+c32_total_calls <- nrow(cluster_three_and_two)
+c32_succesful_calls <- nrow(cluster_three_and_two[cluster_three_and_two$y==1, ])
+c32_success_rate <- c32_succesful_calls/c32_total_calls
+
+c32_revenue <- (c32_success_rate*c32_total_calls) * revenue_per_call
+
+difference_success_rate2 <- (c32_success_rate - success_rate)*100
+c32_total_cost <- (c32_total_calls*variable_cost_per_call) + 
+                  ((c32_total_calls/(avg_retention+(100*difference_success_rate2)))*training_cost)
+
+c32_gross_margin <- round((c32_revenue - c32_total_cost), 2)
+```
+
+**Business Note:** After seeing which clusters were likely to be more
+profitable, we simulated how the performance of the call center would
+have been if the associates have only called cluster 3 (the best
+performing one), or called both clusters 2 and 3, and here are the main
+takeaways.
+
+-   By only calling cluster 3 (`r c3_success_rate`% success rate), the
+    call center would have made a total of `r c3_total_calls` that would
+    have generated a profit of \$`r c3_gross_margin`. Although this
+    already looks better than the current scenario, there is still room
+    for improvement.
+-   By calling both clusters 2 and 3 (overall success rate of
+    `r c32_success_rate`%), the call center would have called
+    `r c32_total_calls` people, making $18204.95
+    of profit.
+
+We could see that filtering of the calls made to the clusters with the
+highest success rates is a strategy that can boost the call centers
+performance. With a `r difference_success_rate2`% increase in the
+success rate, making the call center not only break-even, but also
+profit.
+
+Although at this point of the report it may seem like we have already
+reached a solution to the problem, there is a second approach that is
+worth trying and testing the performance, to in the end, choose the
+alternative in which the call center can profit the most
+
+------------------------------------------------------------------------
+
+### Unsupervised Learning:
+
+**Business Note:** In this segment of the report, our goal is to build 3
+prediction models - a Logistic Regression, a K-Nearest Neighbors and a
+Neural Network - and see if by having a prediction of who are the
+potential successful calls, and targeting those, deliver a result as
+good as (or better than) the previous segment
+
+<br>
+
+#### a. Balancing the Data
+
+Before proceeding, we need to remove the cluster column that was added
+to the scaled dataset in the previous segmentation phase. This column is
+irrelevant for the prediction model and could introduce noise or bias
+into the training process.
+
+Before proceeding, we need to remove the cluster column that was added
+to the scaled dataset in the previous segmentation phase. This column is
+irrelevant for the prediction model and could introduce noise or bias
+into the training process.
+
+Another key point to note is why data balancing is essential and how it
+impacts prediction models. When data is unbalanced, meaning one class is
+represented significantly more than another, prediction models tend to
+be biased towards the majority class. This can lead to poor
+generalization and unreliable predictions, especially for the minority
+class. By balancing the dataset, we ensure that our models have a fair
+representation of each class, enabling them to learn patterns more
+effectively from both classes and ultimately making the model more
+accurate and generalizable.
+
+We are addressing the class imbalance issue at this stage, rather than
+during initial data cleaning, because balancing is a model-specific
+preprocessing step.
+
+We will create two balanced datasets: one from the scaled data for
+training the K-Nearest Neighbors (KNN) and Artificial Neural Network
+(ANN) models, and another using the encoded but unbalanced data for the
+Logistic Regression model. It’s important not to use scaled data for
+Logistic Regression because scaling reduce variance in the dataset,
+which is crucial for Logistic Regression to perform accurately. This
+approach allows each model to operate with data that maximizes its
+performance potential while preserving statistical integrity.
+
+```{r}
+scaled_data$cluster <- NULL
+
+table(scaled_data$y)
+
+smote_data <- SMOTE(scaled_data[, -which(names(scaled_data) == "y")], scaled_data$y, K = 5, dup_size = 2)
+balanced_data <- data.frame(smote_data$data)
+names(balanced_data)[ncol(balanced_data)] <- "y"
+balanced_data$y <- as.numeric(balanced_data$y)
+
+ 
+smote_data_lr <- SMOTE(encoded_data[, -which(names(encoded_data) == "y")], encoded_data$y, K = 5, dup_size = 2)
+balanced_data_lr <- data.frame(smote_data_lr$data)
+names(balanced_data_lr)[ncol(balanced_data_lr)] <- "y"
+balanced_data_lr$y <- as.numeric(balanced_data_lr$y)
+
+```
+
+To be more specific, our code applies Synthetic Minority Over-sampling
+Technique (SMOTE) to balance two datasets, `scaled_data` and
+`encoded_data`, by increasing instances of the minority class in the
+target variable `y`. For each dataset, it removes y from the features,
+applies SMOTE with 5 nearest neighbors and a duplication size of 2, and
+converts the result into a new balanced data frame. The target variable
+`y` is then renamed and converted to a numeric type in each balanced
+dataset, producing `balanced_data` and `balanced_data_lr` as the
+balanced versions of `scaled_data` and `encoded_data`.
+
+<br>
+
+#### b. Splitting the Data
+
+Data splitting is essential in model training as it enables us to
+evaluate a model's performance on data it hasn't encountered before. By
+dividing our data into training and test sets, we create two separate
+groups: one for training the model (the training set) and another for
+evaluating its performance (the test set). This method helps us avoid
+overfitting, where the model could learn the training data too well and
+struggle to generalize to new, unseen data.
+
+In this setup, we use a test rate of 0.2 to split our data into 80%
+training and 20% testing for each model configuration:
+
+Separate data split for Network Models and Logistic Regression: We
+sample rows from the first balanced dataset to create training and test
+sets for the K-Nearest Neighbors (KNN), Artificial Neural Network (ANN),
+while for the Logistic Regression we are splitting the second balanced
+dataset, in which the data was not scaled.
+
+```{r}
+test_rate <- 0.2
+#set.seed(666)
+test_rows <- sample(1:nrow(balanced_data), test_rate*nrow(balanced_data))
+train_data <- balanced_data[test_rows, ]
+test_data <- balanced_data[-test_rows, ]
+
+test_rows_lr <- sample(1:nrow(balanced_data_lr), test_rate*nrow(balanced_data_lr))
+train_data_lr <- balanced_data_lr[test_rows_lr, ]
+test_data_lr <- balanced_data_lr[-test_rows_lr, ]
+```
+
+<br>
+
+#### c. Logistic Regression Model
+
+In order to optimize our profits and only target customers who are
+predicted to buy our product, our team first developed a logistic
+regression. This model identifies relationships between various inputs
+and predicts the probability of an outcome. Furthermore, rather than
+pursuing a computationally-intensive process of building a giant model,
+and then a step one that simplifies it, this approach builds a simple
+model and then it performs a stepwise selection on the simple model.
+Stepwise selection is a method of refining a model by adding or removing
+predictors based on specific criteria.
+
+As we want for the prediction to be binary, we create an `ifelse` in
+which every prediction below 0.25 is considered to be a failed call (0),
+and from 0.25 up a successful call (1).
+
+```{r, cache=TRUE, warning = FALSE, message = FALSE}
+lr <- glm(y ~ ., data = train_data_lr, family = binomial)
+stepwise_lr <- step(lr, direction = "both", trace = 0)
+
+prediction_lr <- predict(stepwise_lr, test_data_lr, type = "response")
+binary_prediction_lr <- ifelse(prediction_lr < .25, 0, 1)
+
+confusionMatrix(as.factor(binary_prediction_lr),
+                as.factor(test_data_lr$y),
+                positive = "1")
+```
+
+In order to analyze the performance of this model, we ran a confusion
+matrix. The logistic regression model shows an accuracy of 77.47%,
+meaning it correctly classifies around 77% of cases. Its sensitivity
+(65.98%) indicates it identifies about 66% of actual positive cases, and
+the specificity is higher at 81.84%, showing that the model is better at
+identifying true negatives.
+
+<br>  
+
+#### d. K-Nearest Neighbor Model
+
+Next, our team developed a K-Nearest Neighbors model, another
+alternative predictive model. KNN creates predictions by examining a
+data point’s k nearest neighbors (k being a number we decide upon, 8). A
+data point’s nearest neighbors would be ones that are most similar to it
+based on the predictive variables.
+
+```{r, cache = TRUE}
+y_col <- which(colnames(train_data) == "y")
+prediction_knn <- knn(train = train_data[,-y_col], 
+                      test = test_data[,-y_col], 
+                      cl = train_data[,y_col], 
+                      k = 4)
+summary(prediction_knn)
+
+confusionMatrix(as.factor(prediction_knn), as.factor(test_data$y), positive = "1")
+```
+
+The k-nearest neighbors (KNN) model achieved an accuracy of 77.8%,
+correctly classifying around 78% of cases. The specificity (85.42%) is
+higher than the sensitivity (57.99%), indicating the model is better at
+identifying true negatives than true positives. Overall this model
+performs well, but worse than the logistic regression.
+
+<br>
+
+####  e. Neural Network Model
+
+For our third and final prediction model, we built an Artificial Neural
+Network (ANN). This model generates predictions by recognizing patterns
+within complex data. An ANN consists of individual units called neurons,
+which function similarly to linear regressions, connected through
+multiple layers. The connections between neurons have weights, which are
+adjusted through a process called backpropagation. During
+backpropagation, the network iteratively updates these weights to
+minimize prediction errors, allowing the model to learn and improve its
+accuracy over time.
+
+```{r, cache=TRUE}
+ann <- neuralnet(y ~ ., data = train_data, hidden = c(1, 1), stepmax = 1e6, lifesign = "none", learningrate = 0.1)
+plot(ann)
+
+prediction_nn <- predict(ann, newdata = test_data)
+summary(prediction_nn)
+
+binary_prediction_nn <- ifelse(prediction_nn > 0.2, 1, 0)
+confusionMatrix(as.factor(binary_prediction_nn),
+                as.factor(test_data$y),
+                positive = "1")
+```
+
+The neural network model achieved an accuracy of 74.81%, meaning it
+correctly classifies about 75% of cases. The sensitivity (70.17%)
+indicates that the model successfully identifies around 70% of actual
+positive cases, while specificity (76.59%) shows it correctly identifies
+approximately 77% of negatives. Overall, the model has fairly balanced
+sensitivity and specificity, performing moderately well in identifying
+both positive and negative cases.
+
+<br>
+
+#### f. Combined Predictions
+
+To create a more robust prediction model, I combined the outputs of the
+three individual models—Logistic Regression, K-Nearest Neighbors (KNN),
+and Artificial Neural Network (ANN). Here, we combined the outputs of
+the three models—Logistic Regression, K-Nearest Neighbors (KNN), and
+Artificial Neural Network (ANN)—into a single prediction using a
+weighted voting approach. In this setup, ew assigned double weight to
+the ANN model, as it has proven to be the most robust among the three
+models. The combined prediction (combined_pred) uses an ifelse condition
+to check if the sum of votes (with ANN votes counted twice) is at least
+2; if so, it assigns a "1" (positive) prediction, otherwise "0"
+(negative). This final combined prediction was then evaluated using a
+confusion matrix (combined_confusion_matrix) to assess the performance
+of this ensemble model.
+
+```{r}
+binary_prediction_lr <- as.factor(binary_prediction_lr)
+prediction_knn <- as.factor(prediction_knn)
+binary_prediction_nn <- as.factor(binary_prediction_nn)
+
+# Apply weighted voting (example: logistic gets more weight)
+combined_pred <- as.factor(ifelse(rowSums(cbind((binary_prediction_lr == "1"), (prediction_knn == "1"), (binary_prediction_nn == "1")*2)) >= 2, "1", "0"))
+
+combined_confusion_matrix <- confusionMatrix(combined_pred, as.factor(test_data$y), positive = "1")
+combined_confusion_matrix
+```
+
+The combined model achieved an accuracy of 76.75%, meaning it correctly
+classified about 77% of cases. The sensitivity (73.78%) indicates that
+it successfully identifies around 74% of actual positive cases, while
+specificity (77.89%) shows a similar performance in correctly
+identifying negatives. Overall, this ensemble model demonstrates a solid
+performance across both positive and negative cases.
+
+An important thing to notice is that, although the double weight on the
+ANN will decrease the overall predictions success rate in the next step
+(decreases from a 61% to a 56%), this model captures more clients, and
+make more calls, making it more profitable. The trade-off is that by
+decreasing a bit the success rate, we will increase the total amount of
+calls to be made, which also increases the gross margin.
+
+<br>
+
+#### g. Financial Performance/Opportunity
+
+**Business Note:** Now, with all the models built and a combined
+prediction that leverages each model's strength, we can measure how
+successful would be to implement this method for the Call Center. We
+will be running similar calculations than for the clustering segment, to
+compare the performances.
+
+```{r}
+true_positives <- combined_confusion_matrix$table[2, 2]
+prediction_false_positives <- combined_confusion_matrix$table[2, 1]
+total_positives <- prediction_false_positives+true_positives
+
+prediction_sucess_rate <- (true_positives)/total_positives
+prediction_percentage_of_total_calls <- total_positives/nrow(test_data)
+prediction_total_calls <- round((prediction_percentage_of_total_calls * total_calls),0)
+prediction_successful_calls <- round((prediction_sucess_rate*prediction_total_calls),0)
+
+predition_revenue <- prediction_total_calls * revenue_per_call
+
+difference_success_rate3 <- (prediction_sucess_rate - success_rate)*100
+prediction_total_costs <- (prediction_total_calls*variable_cost_per_call) + 
+                  ((prediction_total_calls/(avg_retention+(100*difference_success_rate3)))*training_cost)
+
+prediction_gross_margin <- round((predition_revenue - prediction_total_costs), 2)
+```
+
+**Business Note:** From the calculations above we can see that if the
+call center decided to implement the prediction models technique, they
+would have a success rate of `r prediction_sucess_rate`%. Better than
+the rate reached by the clustering strategy.
+
+However, what actually matters is how much profit can this method bring.
+The combined prediction models would have advised the associate to call 15023 clients, compared to the actual `r total_calls` calls made during that period. This, considering the model's success rate, would imply a profit of $162519.6 to the company.
+
+------------------------------------------------------------------------
+
+### Conclusion:
+
+After thoroughly analyzing the problem and evaluating two potential
+strategies for enhancing the Call Center's performance—customer
+clustering and predictive modeling—it is clear that both approaches
+offer significant improvements given the current business context.
+However, the gross margin associated with the predictive modeling
+strategy is notably higher. Additionally, there is substantial room for
+further refinement within the predictive models, including optimizing
+feature selection, exploring more complex models, implementing
+cross-validation, and employing advanced ensemble methods. These
+improvements could lead to even more substantial financial gains.
+
+In light of these insights, the final recommendation for Susan and her
+team is to prioritize the predictive modeling approach in the upcoming
+period. By using these models to identify which clients to contact, the
+team can increase the success rate, lower operational costs, and
+ultimately enhance the firm’s profitability.
